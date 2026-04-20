@@ -3085,9 +3085,12 @@ def systemd_install(
             if enable_on_startup:
                 _run_systemctl(["enable", get_service_name()], system=system, check=True, timeout=30)
             print(f"✓ {scope_label.capitalize()} service definition updated")
-            return
-        print(f"Service already installed at: {unit_path}")
-        print("Use --force to reinstall")
+        else:
+            print(f"Service already installed at: {unit_path}")
+            print("Use --force to reinstall")
+        # Repaired user services must survive logout just like fresh installs.
+        if not system:
+            _ensure_linger_enabled()
         return
 
     unit_path.parent.mkdir(parents=True, exist_ok=True)
