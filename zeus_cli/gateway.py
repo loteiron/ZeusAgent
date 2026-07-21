@@ -3862,6 +3862,7 @@ def refresh_launchd_plist_if_needed() -> bool:
             "launchd reload of %s failed — service not registered after %ds of retries; see %s",
             target, int(_reload_budget), _launchd_reload_log_path(),
         )
+        return False
     print("↻ Updated gateway launchd service definition to match the current ZeusAgent install")
     return True
 
@@ -3872,8 +3873,17 @@ def launchd_install(force: bool = False):
     if plist_path.exists() and not force:
         if not launchd_plist_is_current():
             print(f"↻ Repairing outdated launchd service at: {plist_path}")
-            refresh_launchd_plist_if_needed()
-            print("✓ Service definition updated")
+            if refresh_launchd_plist_if_needed():
+                print("✓ Service definition updated")
+            else:
+                # The plist was rewritten but launchd never registered it (or the write was refused):
+                # a success line here would hide an unloaded service with no KeepAlive.
+                from zeus_constants import display_zeus_home
+                print(
+                    "⚠ Service definition could not be reloaded with launchd. "
+                    "Run 'zeus gateway install --force' or check "
+                    f"{display_zeus_home()}/logs/launchd-reload.log for details."
+                )
             return
         print(f"Service already installed at: {plist_path}")
         print("Use --force to reinstall")
