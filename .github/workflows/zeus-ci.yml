@@ -63,7 +63,7 @@ jobs:
           tests/scripts/test_footgun_subprocess_encoding.py tests/scripts/test_windows_footguns_full_repo_scan.py
           tests/ci/test_stage_windows_release.py tests/ci/test_stage_linux_release.py
           tests/test_verify_http_readiness.py tests/verify/test_runner_process_group_cleanup.py
-          tests/gateway/test_kanban_wake_acceptance.py -- --tb=short -ra
+          tests/gateway/test_kanban_wake_acceptance.py tests/zeus_cli/test_hermes_import_titles.py -- --tb=short -ra
       - name: Run isolated Python tests without retries
         run: |
           set -euo pipefail
@@ -146,7 +146,7 @@ jobs:
           tests/verify/test_evidence_commands.py tests/tui_gateway/test_verification_controls.py
           tests/zeus_cli/test_goal_workspace_evidence.py tests/zeus_cli/test_goal_workspace_safety.py
           tests/zeus_cli/test_goal_control_races.py
-          tests/zeus_cli/test_hermes_import.py tests/zeus_cli/test_hermes_import_concurrency.py
+          tests/zeus_cli/test_hermes_import.py tests/zeus_cli/test_hermes_import_concurrency.py tests/zeus_cli/test_hermes_import_titles.py
           tests/tui_gateway/test_hermes_migration.py
           tests/gateway/test_telegram_command_integrity.py tests/gateway/test_telegram_session_controls.py
           tests/tools/test_terminal_cwd_echo.py tests/skills/test_zeus_engineering_skill.py

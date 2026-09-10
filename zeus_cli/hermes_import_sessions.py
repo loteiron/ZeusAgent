@@ -79,6 +79,25 @@ def _insert(conn, table, values):
                  ",".join("?" for _ in keys) + ")", [values[key] for key in keys])
 
 
+def _available_import_title(conn, original, sid, db):
+    """Allocate inside the import transaction; never rename an existing title owner.
+
+    The complete namespaced ID distinguishes equal source session IDs from two
+    homes. A user can still own any generated name, so consult the same write
+    connection (the general lineage helper's read pool cannot see pending rows).
+    """
+    limit = db.MAX_TITLE_LENGTH
+    base = db.sanitize_title(str(original or "Hermes conversation")[:limit]) or "Hermes conversation"
+    identity = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:12]
+    sequence = 1
+    while True:
+        suffix = " · Hermes " + identity + (f" #{sequence}" if sequence > 1 else "")
+        candidate = base[:limit - len(suffix)] + suffix
+        if not conn.execute("SELECT 1 FROM sessions WHERE title=?", (candidate,)).fetchone():
+            return candidate
+        sequence += 1
+
+
 def merge_chats(snapshot: Path, target: Path, source_key: str, *, profile="default") -> tuple[int, int]:
     """Import complete conversations in one live-database transaction. Existing IDs never change."""
     from zeus_state import SessionDB
@@ -107,8 +126,7 @@ def merge_chats(snapshot: Path, target: Path, source_key: str, *, profile="defau
                                   origin_json=None, user_id=None, parent_session_id=None, system_prompt_hash=None,
                                   profile_name=profile, handoff_state=None, handoff_platform=None, handoff_error=None,
                                   ended_at=original.get("ended_at") or time.time(), end_reason="hermes_import")
-                    values["title"] = (str(original.get("title") or "Hermes conversation")[:180] +
-                                       " · Hermes " + sid[-8:])
+                    values["title"] = _available_import_title(conn, original.get("title"), sid, db)
                     prompt = original.get("system_prompt")
                     if not prompt and original.get("system_prompt_hash"):
                         try:

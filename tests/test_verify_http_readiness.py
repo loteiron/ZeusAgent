@@ -7,10 +7,12 @@ import sys
 import threading
 import time
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 
 from agent.verify.recipes import Recipe
+from agent.verify import runner
 from agent.verify.runner import _poll_readiness, run_verify
 from tests.fakes import loopback_http_server
 
@@ -58,24 +60,41 @@ def _server(statuses=(200,), *, delay=0, startup_delay=0):
         thread.join(timeout=2)
 
 
-def test_readiness_waits_through_warmup_until_healthy_response():
+def _poll_http_status(url, monkeypatch):
+    # Status/retry policy uses real HTTP but a deterministic retry clock. The
+    # loaded Windows runner can spend more than 120ms scheduling a request even
+    # after listener warmup. Socket requests retain finite 3/2/1-second budgets;
+    # the separate slow-server test below measures the real 0.2-second deadline.
+    elapsed = 0.0
+
+    def advance(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    monkeypatch.setattr(runner, "time", SimpleNamespace(monotonic=lambda: elapsed, sleep=advance))
+    return _poll_readiness(url, 3, interval=1)
+
+
+def test_readiness_waits_through_warmup_until_healthy_response(monkeypatch):
     with _server((503, 503, 200)) as (url, received):
-        assert _poll_readiness(url, 1, interval=0.01) == (True, 200, None)
+        assert _poll_http_status(url, monkeypatch) == (True, 200, None)
         assert len(received) == 3
 
 
-def test_fixture_finishes_startup_before_measuring_a_short_readiness_budget():
+def test_fixture_finishes_listener_startup_before_yielding(monkeypatch):
+    started = time.monotonic()
     with _server((503,), startup_delay=0.3) as (url, received):
-        ready, code, _error = _poll_readiness(url, 0.12, interval=0.01)
+        assert time.monotonic() - started >= 0.3, "fixture yielded before its listener started"
+        ready, code, _error = _poll_http_status(url, monkeypatch)
         assert not ready
         assert code == 503
         assert received
 
 
 @pytest.mark.parametrize("status", [404, 500, 503])
-def test_permanent_http_failure_remains_failed_with_actual_status(status):
+def test_permanent_http_failure_remains_failed_with_actual_status(status, monkeypatch):
     with _server((status,)) as (url, received):
-        ready, code, error = _poll_readiness(url, 0.12, interval=0.01)
+        ready, code, error = _poll_http_status(url, monkeypatch)
         assert not ready
         assert code == status
         assert str(status) in error
@@ -83,9 +102,9 @@ def test_permanent_http_failure_remains_failed_with_actual_status(status):
 
 
 @pytest.mark.parametrize("status", [200, 204, 302, 304])
-def test_success_and_redirect_statuses_are_readiness_only(status):
+def test_success_and_redirect_statuses_are_readiness_only(status, monkeypatch):
     with _server((status,)) as (url, _received):
-        assert _poll_readiness(url, 0.2, interval=0.01) == (True, status, None)
+        assert _poll_http_status(url, monkeypatch) == (True, status, None)
 
 
 def test_slow_response_cannot_take_the_default_five_second_request_budget():
@@ -107,7 +126,7 @@ def test_local_readiness_does_not_accept_a_proxy_response(monkeypatch):
         monkeypatch.setenv("HTTP_PROXY", proxy_url)
         monkeypatch.delenv("NO_PROXY", raising=False)
         monkeypatch.delenv("no_proxy", raising=False)
-        ready, code, _error = _poll_readiness(url, 0.12, interval=0.01)
+        ready, code, _error = _poll_http_status(url, monkeypatch)
         assert not ready
         assert code == 503
         assert local_requests

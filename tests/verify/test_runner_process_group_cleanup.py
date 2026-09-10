@@ -17,8 +17,30 @@ from agent.verify.recipes import Recipe
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signal semantics")
 
 
-@pytest.mark.parametrize("behavior", ["delayed-exit", "ignore-term", "wrapper-exits"])
-def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, monkeypatch, behavior):
+@pytest.mark.parametrize(
+    ("behavior", "group_probe_error"),
+    [
+        ("delayed-exit", None),
+        ("ignore-term", None),
+        ("wrapper-exits", None),
+        ("ignore-term", PermissionError),
+        ("ignore-term", ProcessLookupError),
+    ],
+    ids=["delayed-exit", "ignore-term", "wrapper-exits", "probe-permission", "probe-missing"],
+)
+def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, monkeypatch, behavior, group_probe_error):
+    if group_probe_error:
+        actual_killpg = os.killpg
+
+        def unavailable_probe(pgid, sig):
+            # macOS returned EPERM for signal 0 during native cancellation.
+            # Probe failures cannot replace observing the still-live child;
+            # real TERM/KILL delivery remains active throughout this test.
+            if sig == 0:
+                raise group_probe_error("group probe is unavailable during teardown")
+            return actual_killpg(pgid, sig)
+
+        monkeypatch.setattr(os, "killpg", unavailable_probe)
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

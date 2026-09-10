@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, cp, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, cp, access, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,11 +170,47 @@ test('Linux global npm command preserves caller CWD, Unicode arguments and runti
   const project = path.join(scratch, 'caller project Türkçe');
   await mkdir(project);
   const result = run(path.join(prefix, 'bin/zeus'), ['--query', 'Türkçe & $ literal', '--desktop'], { cwd: project });
-  assert.equal(result.status, 23, result.stderr);
+  assert.equal(result.status, 23, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
   assert.deepEqual(JSON.parse(result.stdout), {
     cwd: project,
     argv: ['--manifest', path.join(prefix, 'lib/node_modules/@loteiron/zeus-agent/linux-runtime-manifest.json'), '--', '--query', 'Türkçe & $ literal', '--desktop'],
   });
+});
+
+test('filesystem-linked CLI entry executes once and importing it has no startup side effect', {
+  skip: !['win32', 'linux'].includes(process.platform),
+}, async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), 'zeus linked entry Türkçe '));
+  const installed = path.join(scratch, 'real package');
+  await mkdir(path.join(installed, 'bin'), { recursive: true });
+  await mkdir(path.join(installed, 'lib'));
+  await cp(path.join(root, 'packages/zeus-cli/bin/zeus.mjs'), path.join(installed, 'bin/zeus.mjs'));
+  const helper = process.platform === 'linux' ? 'linux-runtime.mjs' : 'windows-runtime.mjs';
+  const manifest = process.platform === 'linux' ? 'linux-runtime-manifest.json' : 'runtime-manifest.json';
+  await writeFile(path.join(installed, manifest), '{}');
+  await writeFile(path.join(installed, 'lib', helper), `
+    console.log(JSON.stringify({cwd: process.cwd(), args: process.argv.slice(2)}));
+    process.exitCode = 23;
+  `);
+  const linked = path.join(scratch, 'linked package');
+  // Windows junctions need no developer-mode privilege; both platforms exercise
+  // Node's real filesystem resolution rather than mocking argv or import.meta.
+  await symlink(installed, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const project = path.join(scratch, 'caller project');
+  await mkdir(project);
+  const args = ['--query', 'Türkçe & $ literal'];
+  const direct = run(process.execPath, [path.join(installed, 'bin/zeus.mjs'), ...args], { cwd: project });
+  assert.equal(direct.status, 23, `stdout: ${direct.stdout}\nstderr: ${direct.stderr}`);
+  const result = run(process.execPath, [path.join(linked, 'bin/zeus.mjs'), ...args], { cwd: project });
+  assert.equal(result.status, 23, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+  assert.deepEqual(JSON.parse(result.stdout), JSON.parse(direct.stdout));
+
+  const importer = path.join(scratch, 'import-only.mjs');
+  await writeFile(importer, "await import('./linked package/bin/zeus.mjs'); console.log('imported without starting');");
+  const imported = run(process.execPath, [importer], { cwd: project });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout.trim(), 'imported without starting');
+  assert.equal(imported.stderr, '');
 });
 
 test('Linux npm wrapper forwards service SIGTERM so its helper can stop its owned child', {

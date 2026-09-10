@@ -179,10 +179,8 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
     pgid = proc.pid
 
     def live_members() -> bool:
-        try:
-            os.killpg(pgid, 0)  # windows-footgun: ok — Windows returns above
-        except ProcessLookupError:
-            return False
+        # macOS can reject killpg(..., 0) while a group is exiting. A signal
+        # probe is not evidence that its members have released their sockets.
         for pid in psutil.pids():
             try:
                 if os.getpgid(pid) != pgid:  # windows-footgun: ok — Windows returns above

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, unlinkSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,7 +88,19 @@ export async function main(args = process.argv.slice(2)) {
   return run(process.execPath, [runtime, '--manifest', manifest, '--', ...args]);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    // npm's POSIX bin is a symlink. Node resolves the module URL but retains
+    // the invoked link in argv, so both sides must use their actual file path.
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // Importing the launcher from an eval or a removed caller must stay inert.
+    return false;
+  }
+}
+
+if (isMainModule()) {
   try {
     process.exitCode = await main();
   } catch (error) {
