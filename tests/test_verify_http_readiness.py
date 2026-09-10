@@ -11,6 +11,7 @@ import pytest
 
 from agent.verify.recipes import Recipe
 from agent.verify.runner import _poll_readiness, run_verify
+from tests.fakes import loopback_http_server
 
 
 @contextlib.contextmanager
@@ -31,7 +32,7 @@ def _server(statuses=(200,), *, delay=0):
         def log_message(self, *_args):
             pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = loopback_http_server.LoopbackHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
@@ -97,7 +98,7 @@ def test_a_missing_readiness_route_cannot_verify_the_real_started_project(tmp_pa
         port = probe.getsockname()[1]
     recipe = Recipe(
         name="missing health route",
-        start=f'"{sys.executable}" -m http.server {port} --bind 127.0.0.1',
+        start=loopback_http_server.command(port),
         port=port,
         readiness_path="/missing-health-route",
     )
@@ -106,6 +107,32 @@ def test_a_missing_readiness_route_cannot_verify_the_real_started_project(tmp_pa
     assert not result.readiness.ready
     assert not result.ok
     assert result.to_dict()["ok"] is False
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        assert probe.connect_ex(("127.0.0.1", port)) != 0, "verification left its server running"
+
+
+@pytest.mark.parametrize("dns_delay", [0, 4], ids=["unavailable", "stalled"])
+def test_loopback_fixture_starts_even_when_reverse_dns_is_unavailable(tmp_path, dns_delay):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    launcher = tmp_path / "dns_unavailable.py"
+    launcher.write_text(
+        "import runpy, socket, sys, time\n"
+        "def unavailable(*args):\n"
+        f"    time.sleep({dns_delay})\n"
+        "    raise AssertionError('Loopback fixture attempted external reverse DNS')\n"
+        "socket.getfqdn = unavailable\n"
+        f"sys.argv = [{loopback_http_server.__file__!r}, {str(port)!r}]\n"
+        f"runpy.run_path({loopback_http_server.__file__!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    recipe = Recipe(name="DNS-independent HTTP fixture", start=f'"{sys.executable}" "{launcher}"', port=port)
+    result = run_verify(tmp_path, recipe, phases=("start",), ready_timeout=3)
+    assert result.readiness.ready, result.readiness.to_dict()
+    assert result.readiness.status_code == 200
+    assert result.ok
     with socket.socket() as probe:
         probe.settimeout(0.5)
         assert probe.connect_ex(("127.0.0.1", port)) != 0, "verification left its server running"

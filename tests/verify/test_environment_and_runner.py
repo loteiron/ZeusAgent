@@ -3,7 +3,6 @@
 import http.server
 import json
 import subprocess
-import sys
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -18,6 +17,7 @@ from agent.verify.environment import (
 )
 from agent.verify.recipes import Recipe
 from agent.verify.runner import run_verify
+from tests.fakes import loopback_http_server
 
 
 class TestManifest:
@@ -211,7 +211,7 @@ class TestReadiness:
         port = _free_port()
         recipe = Recipe(
             name="x",
-            start=f'"{sys.executable}" -m http.server {port} --bind 127.0.0.1',
+            start=loopback_http_server.command(port),
             port=port,
         )
         result = run_verify(tmp_path, recipe, phases=("start",), ready_timeout=15)
@@ -256,7 +256,7 @@ class TestReadiness:
             def log_message(self, *a):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", port), Handler)
+        server = loopback_http_server.LoopbackHTTPServer(("127.0.0.1", port), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         time.sleep(0.05)

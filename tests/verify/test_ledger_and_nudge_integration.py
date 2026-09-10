@@ -216,8 +216,9 @@ def test_detect_path_merges_project_facts_commands(zeus_home, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["source"] == "detected"
     tests = payload["recipe"]["test"]
-    assert "scripts/run_tests.sh" in tests
-    assert "pytest" in tests
+    # The project's canonical runner owns its test environment and flags;
+    # detection must not append a second bare pytest invocation.
+    assert tests == ["scripts/run_tests.sh"]
 
 
 def test_manifest_recipe_is_not_merged(zeus_home, capsys):

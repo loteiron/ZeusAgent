@@ -17,18 +17,28 @@ def _probe(tmp_path: Path, body: str) -> dict:
     script.write_text(
         r'''
 param([string]$ModulePath, [string]$InstallDirectory)
+function Trace-Stage([string]$Stage) {
+    [Console]::Error.WriteLine(("ZEUS_PATH_PROBE {0:o} {1}" -f [DateTime]::UtcNow, $Stage))
+}
+Trace-Stage "script entered"
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
+Trace-Stage "module import begin"
 Import-Module $ModulePath -Force
+Trace-Stage "module import complete"
 $testRoot = "Software\ZeusAgent\InstallerTests\" + [Guid]::NewGuid().ToString("N")
 $environmentKey = "$testRoot\Environment"
 $registrationKey = "$testRoot\Registration"
 $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($environmentKey)
+Trace-Stage "private registry created"
 $bin = Join-Path $InstallDirectory "bin"
 New-Item -ItemType Directory -Path $bin -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $bin "zeus.cmd") -Value "@echo off" -Encoding Ascii
+Trace-Stage "launcher fixture ready"
 function Change([string]$Action) {
+    Trace-Stage "$Action begin"
     Update-ZeusCliPath -Action $Action -InstallDirectory $InstallDirectory -EnvironmentKeyPath $environmentKey -RegistrationKeyPath $registrationKey
+    Trace-Stage "$Action complete"
 }
 function Read-Path {
     $envKey.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -36,17 +46,27 @@ function Read-Path {
 try {
 ''' + body + r'''
 } finally {
+    Trace-Stage "cleanup begin"
     $envKey.Dispose()
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testRoot, $false)
+    Trace-Stage "cleanup complete"
 }
 ''', encoding="utf-8-sig")
-    result = subprocess.run(
-        [str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
-         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
-         "-ModulePath", str(MODULE), "-InstallDirectory", str(tmp_path / "App folder Ω")],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
+    try:
+        result = subprocess.run(
+            [str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
+             "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+             "-ModulePath", str(MODULE), "-InstallDirectory", str(tmp_path / "App folder Ω")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # TimeoutExpired's message omits captured output. Preserve the bounded
+        # stage trace so CI can distinguish shell startup from registry work.
+        trace = exc.stderr or b""
+        if isinstance(trace, bytes):
+            trace = trace.decode("utf-8", errors="replace")
+        pytest.fail(f"Installer PATH probe exceeded 45s. Stage trace:\n{trace[-4000:] or '(script not entered)'}")
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
     return json.loads(result.stdout.strip())
 
