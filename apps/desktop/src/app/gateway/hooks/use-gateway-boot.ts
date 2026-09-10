@@ -3,12 +3,12 @@ import { useEffect, useRef } from 'react'
 
 import { shouldApplyPostBootProgressError } from '@/components/boot-failure-reauth'
 import type { ZeusAgentConnection } from '@/global'
-import { ZeusAgentGateway } from '@/zeus'
 import { translateNow } from '@/i18n'
+import { waitForBackendBoot } from '@/lib/backend-boot-wait'
 import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import { decideLivenessForceClose, LIVENESS_REPROBE_DELAY_MS } from '@/lib/gateway-liveness-policy'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
-import { BACKEND_BOOT_WAIT_TIMEOUT_MS, RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
+import { RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
 import {
   $desktopBoot,
   applyDesktopBootProgress,
@@ -83,6 +83,7 @@ import {
 } from '@/store/session-states'
 import { windowProfileOverride } from '@/store/windows'
 import type { RpcEvent } from '@/types/zeus'
+import { ZeusAgentGateway } from '@/zeus'
 
 import { stashGatewaySurvivor, survivorIsStale, takeGatewaySurvivor } from './gateway-hmr-survivor'
 
@@ -130,7 +131,9 @@ const BOOT_RETRY_BASE_DELAY_MS = 2_000
 // own connect timeout.
 
 /** Registry identity whose runtimes died with the primary connection. */
-export function primaryRuntimeConnectionId(connection: Pick<ZeusAgentConnection, 'connectionId' | 'mode'>): null | string {
+export function primaryRuntimeConnectionId(
+  connection: Pick<ZeusAgentConnection, 'connectionId' | 'mode'>
+): null | string {
   const connectionId = connection.connectionId?.trim()
 
   if (connectionId) {
@@ -179,6 +182,7 @@ export function useGatewayBoot({
 
   useEffect(() => {
     let cancelled = false
+    const bootAbort = new AbortController()
     const desktop = window.zeusDesktop
 
     const publish = (next: ZeusAgentConnection | null) => {
@@ -615,10 +619,11 @@ export function useGatewayBoot({
         // the `finally` below only runs once this promise settles. Uses the
         // shared backend-boot budget rather than the reconnect budget because
         // ensureBackend may cold-spawn a pooled helper backend here.
-        const conn = await withTimeout(
+        const conn = await waitForBackendBoot(
           desktop.getConnection(windowProfileOverride() ?? undefined),
-          BACKEND_BOOT_WAIT_TIMEOUT_MS,
-          'Timed out reconnecting to ZeusAgent backend'
+          desktop,
+          'Timed out reconnecting to ZeusAgent backend',
+          bootAbort.signal
         )
 
         if (!ownsSwitch()) {
@@ -1023,12 +1028,13 @@ export function useGatewayBoot({
         // Everything else keeps dialing the primary.
         // Bounded like the reconnect path (#93454): a wedged main-process
         // round-trip must not hang "Starting ZeusAgent…" forever. Initial boot
-        // rides out a full backend cold spawn, so it gets the shared 45s
-        // backend-boot budget, not the 20s reconnect budget.
-        const conn = await withTimeout(
+        // separates explicit runtime installation/user choice from the normal
+        // 45s backend spawn budget. Reconnect keeps its shorter 20s bound.
+        const conn = await waitForBackendBoot(
           desktop.getConnection(windowProfileOverride() ?? undefined),
-          BACKEND_BOOT_WAIT_TIMEOUT_MS,
-          'Timed out connecting to ZeusAgent backend'
+          desktop,
+          'Timed out connecting to ZeusAgent backend',
+          bootAbort.signal
         )
 
         if (cancelled) {
@@ -1184,6 +1190,7 @@ export function useGatewayBoot({
 
     return () => {
       cancelled = true
+      bootAbort.abort()
       offSwitchLifecycle()
       endGatewaySwitch()
       clearReconnectTimer()

@@ -1,8 +1,9 @@
 import { atom, computed } from 'nanostores'
 
 import type { DesktopConnectionsRegistry } from '@/global'
+import { waitForBackendBoot } from '@/lib/backend-boot-wait'
 import { persistStringRecord, storedStringRecord } from '@/lib/storage'
-import { BACKEND_BOOT_WAIT_TIMEOUT_MS, isTimeoutError, withTimeout } from '@/lib/with-timeout'
+import { isTimeoutError, withTimeout } from '@/lib/with-timeout'
 import { $connectionsRegistry } from '@/store/connection-registry-state'
 import {
   beginGatewaySwitch,
@@ -32,12 +33,6 @@ const LAST_PROFILE_STORAGE_KEY = 'zeus.desktop.lastProfileByConnection'
 const SWITCH_DIAL_TIMEOUT_MS = 20_000
 const SWITCH_COMMIT_TIMEOUT_MS = 20_000
 const SWITCH_REMEMBER_TIMEOUT_MS = 5_000
-// Matches the primary spawn budget: a healthy cold boot publishes well within
-// this; anything longer means the primary is not coming and the registry
-// restore should stop waiting for it. Shared constant so the boot-class
-// budgets can't drift apart (see with-timeout.ts).
-const BOOT_DESCRIPTOR_WAIT_TIMEOUT_MS = BACKEND_BOOT_WAIT_TIMEOUT_MS
-
 export { $connectionsRegistry } from '@/store/connection-registry-state'
 
 // Use only the resolved descriptor identity Electron publishes. `primary`
@@ -170,9 +165,9 @@ function waitForInitialConnection(): Promise<void> {
     })
   })
 
-  return withTimeout(
+  return waitForBackendBoot(
     published,
-    BOOT_DESCRIPTOR_WAIT_TIMEOUT_MS,
+    window.zeusDesktop,
     'Timed out waiting for the primary connection descriptor'
   ).catch(error => {
     unlisten?.()

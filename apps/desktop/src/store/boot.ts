@@ -30,12 +30,14 @@ function clampProgress(value: number) {
 
 export function applyDesktopBootProgress(progress: DesktopBootProgress) {
   const current = $desktopBoot.get()
+
+  // A failed coroutine cannot resume when main later publishes healthy-looking
+  // progress. Only an explicit retry or completed new handshake clears failure.
+  if (current.error) {return}
   const nextProgress = clampProgress(progress.progress)
   const mergedProgress = progress.running ? Math.max(current.progress, nextProgress) : nextProgress
 
-  // Don't let a late progress event (error: null) clobber a previously-set
-  // boot failure — failDesktopBoot is terminal for this boot cycle.
-  const error = progress.error ?? (current.running ? null : current.error)
+  const error = progress.error ?? null
 
   $desktopBoot.set({
     ...current,

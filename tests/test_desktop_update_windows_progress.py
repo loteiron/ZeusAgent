@@ -26,6 +26,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_UPDATE_PS1 = REPO_ROOT / "scripts" / "desktop-update" / "windows.ps1"
 
 
+def _await_progress_url(process: subprocess.Popen, output_path: Path) -> str:
+    # Host/module preparation is a fixture prerequisite, not a running updater.
+    # Once prepared, the real listener still has the original 20-second budget.
+    deadline = time.monotonic() + 45
+    phase = "host preparation"
+    text = ""
+    while time.monotonic() < deadline:
+        text = output_path.read_text(encoding="utf-8", errors="replace")
+        if phase == "host preparation" and "ZEUS_PROGRESS_HOST ready" in text:
+            phase = "listener startup"
+            deadline = time.monotonic() + 20
+        match = re.search(r"SELF-TEST: shim at (http://127\.0\.0\.1:\d+/)", text)
+        if match:
+            assert phase == "listener startup", "updater started before host preparation"
+            return match.group(1)
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+    raise AssertionError(f"Progress {phase} did not finish within its budget.\n{text[-8000:]}")
+
+
 def _read_progress(url: str, deadline: float) -> dict[str, object]:
     """Poll /progress, retrying transient socket stalls until ``deadline``.
 
@@ -58,8 +79,14 @@ def _read_progress(url: str, deadline: float) -> dict[str, object]:
     )
 
 
-@pytest.mark.parametrize("slow_focus_compiler", [False, True])
-def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_focus_compiler: bool) -> None:
+@pytest.mark.parametrize(
+    ("slow_focus_compiler", "host_preparation_delay"),
+    [(False, 0), (True, 0), (False, 21)],
+    ids=["normal", "slow-focus", "slow-host"],
+)
+def test_progress_advances_while_the_orchestrator_blocks(
+    tmp_path: Path, slow_focus_compiler: bool, host_preparation_delay: int,
+) -> None:
     powershell = shutil.which("powershell.exe")
     assert powershell, "Windows updater tests require Windows PowerShell."
 
@@ -77,13 +104,30 @@ def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_fo
     # whole window comfortably inside the hold.
     env["ZEUS_SELFTEST_HOLD_SECONDS"] = "30"
 
-    command = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
-    if slow_focus_compiler:
-        # Reproduce cold Add-Type startup independently of runner load. A
-        # foreground-window helper is not a dependency of the HTTP listener.
-        wrapper = tmp_path / "slow-focus-compiler.ps1"
-        wrapper.write_text(
-            "param([string]$Target)\n"
+    wrapper = tmp_path / "prepared-progress-host.ps1"
+    wrapper.write_text(
+        "param([string]$Target)\n"
+        "[Console]::Error.WriteLine('ZEUS_PROGRESS_HOST preparing local modules')\n"
+        f"[Threading.Thread]::Sleep({host_preparation_delay * 1000})\n"
+        # Only OS modules are needed by this isolated self-test. The new
+        # listener runspace inherits this same fixed, local module location.
+        "$moduleRoot = [IO.Path]::Combine($PSHOME, 'Modules')\n"
+        "$env:PSModulePath = $moduleRoot\n"
+        "$management = [IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')\n"
+        "$utility = [IO.Path]::Combine($moduleRoot, 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')\n"
+        "Import-Module $management -ErrorAction Stop\n"
+        "Import-Module $utility -ErrorAction Stop\n"
+        "[Console]::Error.WriteLine('ZEUS_PROGRESS_HOST preparing child runspace')\n"
+        "$rs = [runspacefactory]::CreateRunspace(); $rs.Open()\n"
+        "$warmup = [powershell]::Create(); $warmup.Runspace = $rs\n"
+        "try {\n"
+        "  [void]$warmup.AddCommand('Import-Module').AddParameter('Name', $utility).Invoke()\n"
+        "  if ($warmup.HadErrors) { throw 'Child runspace module preparation failed' }\n"
+        "  $warmup.Commands.Clear()\n"
+        "  [void]$warmup.AddCommand('ConvertTo-Json').AddParameter('InputObject', @{ready=$true}).AddParameter('Compress').Invoke()\n"
+        "  if ($warmup.HadErrors) { throw 'Child runspace JSON preparation failed' }\n"
+        "} finally { $warmup.Dispose(); $rs.Close(); $rs.Dispose() }\n"
+        + (
             "function Add-Type {\n"
             "  if ($args -contains 'ZeusAgentHandoff') {\n"
             "    Write-Host 'SLOW-FOCUS-COMPILER-START'\n"
@@ -91,12 +135,14 @@ def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_fo
             "  }\n"
             "  Microsoft.PowerShell.Utility\\Add-Type @args\n"
             "}\n"
-            "& $Target -SelfTestUi -NoUi\n",
-            encoding="utf-8",
+            if slow_focus_compiler else ""
         )
-        command += [str(wrapper), "-Target", str(WINDOWS_UPDATE_PS1)]
-    else:
-        command += [str(WINDOWS_UPDATE_PS1), "-SelfTestUi", "-NoUi"]
+        + "[Console]::Error.WriteLine('ZEUS_PROGRESS_HOST ready')\n"
+        "& $Target -SelfTestUi -NoUi\n",
+        encoding="utf-8",
+    )
+    command = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+               str(wrapper), "-Target", str(WINDOWS_UPDATE_PS1)]
 
     with output_path.open("wb") as output:
         process = subprocess.Popen(
@@ -108,19 +154,7 @@ def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_fo
         )
 
     try:
-        deadline = time.monotonic() + 20
-        shim_url = None
-        while time.monotonic() < deadline:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-            match = re.search(r"SELF-TEST: shim at (http://127\.0\.0\.1:\d+/)", text)
-            if match:
-                shim_url = match.group(1)
-                break
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-
-        assert shim_url, output_path.read_text(encoding="utf-8", errors="replace")
+        shim_url = _await_progress_url(process, output_path)
 
         # The URL prints BEFORE the orchestrator publishes its held stage —
         # sampling immediately races the publish and can catch the page's
@@ -149,6 +183,38 @@ def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_fo
         assert int(second["elapsed_seconds"]) > int(first["elapsed_seconds"])
 
         assert process.wait(timeout=60) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_listener_deadline_is_not_extended_by_host_preparation(tmp_path: Path) -> None:
+    powershell = shutil.which("powershell.exe")
+    assert powershell
+    script = tmp_path / "listener-never-starts.ps1"
+    script.write_text(
+        "[Console]::WriteLine('ZEUS_PROGRESS_HOST ready')\n"
+        "[Threading.Thread]::Sleep(30000)\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "blocked-listener.log"
+    with output_path.open("wb") as output:
+        process = subprocess.Popen(
+            [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            stdout=output, stderr=subprocess.STDOUT, cwd=tmp_path,
+        )
+    try:
+        host_deadline = time.monotonic() + 45
+        while "ZEUS_PROGRESS_HOST ready" not in output_path.read_text(encoding="utf-8", errors="replace"):
+            assert process.poll() is None
+            assert time.monotonic() < host_deadline
+            time.sleep(0.05)
+        started = time.perf_counter()
+        with pytest.raises(AssertionError, match="listener startup did not finish"):
+            _await_progress_url(process, output_path)
+        elapsed = time.perf_counter() - started
+        assert 19 <= elapsed < 25, f"listener did not retain its 20s budget: {elapsed:.3f}s"
     finally:
         if process.poll() is None:
             process.kill()

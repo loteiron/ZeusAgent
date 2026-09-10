@@ -1,7 +1,7 @@
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DesktopConnectionsRegistry } from '@/global'
+import type { DesktopBootstrapEvent, DesktopConnectionsRegistry } from '@/global'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { $desktopBoot } from '@/store/boot'
 import {
@@ -1205,6 +1205,44 @@ describe('useGatewayBoot remote reconnect loop (real hook, fake socket)', () => 
     })
 
     expect($connection.get()).toBeNull()
+  })
+
+  it('finishes the real renderer handshake after a first-run install exceeds the ordinary backend budget', async () => {
+    const descriptor = deferred<typeof primaryConn>()
+    let event: ((payload: DesktopBootstrapEvent) => void) | undefined
+
+    const desktop = {
+      ...fakeDesktop(),
+      getConnection: vi.fn(() => descriptor.promise),
+      getBootstrapState: vi.fn(async () => ({ active: true, startedAt: Date.now(), error: null, setupChoice: null })),
+      onBootstrapEvent: vi.fn((listener: (payload: DesktopBootstrapEvent) => void) => {
+        event = listener
+
+        return () => {
+          event = undefined
+        }
+      })
+    }
+
+    ;(window as { zeusDesktop?: unknown }).zeusDesktop = desktop
+    render(<Harness />)
+    await flushAsync()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(257_000)
+    })
+    expect($desktopBoot.get().error).toBeNull()
+
+    act(() => {
+      event?.({ type: 'complete', marker: {} })
+      descriptor.resolve(primaryConn)
+    })
+    await flushAsync()
+
+    expect($gatewayState.get()).toBe('open')
+    expect($desktopBoot.get().visible).toBe(false)
+    expect($desktopBoot.get().phase).toBe('renderer.ready')
+    expect(event).toBeUndefined()
   })
 
   it('a getConnection() that hangs on INITIAL boot rejects on its own after the reconnect-attempt timeout, not only when main eventually gives up (#93454)', async () => {

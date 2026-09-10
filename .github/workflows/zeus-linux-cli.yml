@@ -16,10 +16,66 @@ defaults:
     shell: bash
 
 jobs:
+  candidate:
+    name: Read and verify the manual draft candidate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    # GitHub hides draft releases from read-only tokens. This isolated job never
+    # checks out source, unpacks or executes candidate bytes, or publishes assets.
+    permissions:
+      contents: write
+    outputs:
+      artifact-id: ${{ steps.bundle.outputs.artifact-id }}
+    steps:
+      - name: Download the exact release candidate assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir "$RUNNER_TEMP/zeus-command-assets"
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/zeus-command-assets" \
+            --pattern "loteiron-zeus-agent-$RELEASE_VERSION.tgz" --pattern 'linux-runtime-manifest.json' --pattern 'zeus-source-linux.tar.gz' \
+            --pattern 'install-linux.sh' --pattern 'SHA256SUMS.txt'
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re
+          assets = pathlib.Path(os.environ['RUNNER_TEMP']) / 'zeus-command-assets'
+          expected = {f"loteiron-zeus-agent-{os.environ['RELEASE_VERSION']}.tgz",
+                      'linux-runtime-manifest.json', 'zeus-source-linux.tar.gz', 'install-linux.sh'}
+          assert {file.name for file in assets.iterdir()} == expected | {'SHA256SUMS.txt'}, 'Unexpected or missing candidate asset'
+          digests = {}
+          for line in (assets / 'SHA256SUMS.txt').read_text(encoding='utf-8').splitlines():
+              match = re.fullmatch(r'([0-9a-f]{64}) [ *]([A-Za-z0-9][A-Za-z0-9._-]*)', line)
+              assert match, 'Invalid checksum entry'
+              digest, name = match.groups()
+              assert name not in digests, 'Duplicate checksum entry'
+              digests[name] = digest
+          for name in sorted(expected):
+              file = assets / name
+              assert file.is_file() and not file.is_symlink(), 'Candidate must be an ordinary file'
+              assert name in digests, f'Missing checksum: {name}'
+              checksum = hashlib.sha256()
+              with file.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                      checksum.update(chunk)
+              assert checksum.hexdigest() == digests[name], f'Candidate checksum mismatch: {name}'
+          PY
+      - name: Hand verified bytes to the read-only installation jobs
+        id: bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zeus-command-candidate
+          path: ${{ runner.temp }}/zeus-command-assets
+          if-no-files-found: error
+          retention-days: 14
+
   command:
     name: Release npm and terminal installer on ${{ matrix.os }}
+    needs: candidate
     runs-on: ${{ matrix.os }}
     timeout-minutes: 70
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -31,16 +87,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.2'
-      - name: Download the exact release candidate assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
+      - name: Download the immutable verified candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.candidate.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/zeus-command-assets
+      - name: Check received candidate bytes
         run: |
-          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          mkdir "$RUNNER_TEMP/zeus-command-assets"
-          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/zeus-command-assets" \
-            --pattern '*.tgz' --pattern 'linux-runtime-manifest.json' --pattern 'zeus-source-linux.tar.gz' \
-            --pattern 'install-linux.sh' --pattern 'SHA256SUMS.txt'
           cd "$RUNNER_TEMP/zeus-command-assets"
           sha256sum --check --ignore-missing SHA256SUMS.txt
       - name: Fetch and check the manifest's official Linux tools

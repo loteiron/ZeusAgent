@@ -11,8 +11,12 @@ past that); see the **routing table** at the end and read the area file before e
 
 - `.github/workflows/zeus-ci.yml` runs read-only source checks. The manually
   dispatched `zeus-linux-package.yml` and `zeus-linux-cli.yml` workflows validate
-  Ubuntu packages and release commands with read-only permissions. Release assets
-  are published explicitly and manually; these workflows do not publish them.
+  Ubuntu packages and release commands. Their installation jobs remain read-only.
+  The manual CLI workflow's isolated draft-download job needs `contents: write`
+  because GitHub hides drafts from read-only tokens; it only downloads, hashes,
+  and transfers assets, never checks out source, executes payloads, or publishes.
+  Release assets are published explicitly and manually; these workflows do not
+  publish them.
   The 32 inherited workflows in `.github/upstream-workflows/` remain inactive
   reference material.
 - TDD and the observe/test/review loop are development methods, not runtime features.

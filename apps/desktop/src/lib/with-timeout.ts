@@ -1,9 +1,7 @@
-/** Shared budget for any renderer await that rides out a primary backend
- * cold boot (initial getConnection(), the registry restore's descriptor
- * wait). Matches the main-process spawn budget
- * (DEFAULT_BACKEND_READY_TIMEOUT_MS in electron/backend-health.ts): a
- * healthy cold boot publishes well within this; anything longer means the
- * backend is not coming and the caller should fail instead of hanging.
+/** Shared budget for spawning an already-installed primary backend.
+ * Matches DEFAULT_BACKEND_READY_TIMEOUT_MS in electron/backend-health.ts.
+ * Initial getConnection/registry waits use waitForBackendBoot to separate
+ * first-run installation and the user's setup choice from this spawn budget.
  * Reconnect-class awaits against an already-spawned backend use the shorter
  * RECONNECT_ATTEMPT_TIMEOUT_MS below instead. */
 export const BACKEND_BOOT_WAIT_TIMEOUT_MS = 45_000
