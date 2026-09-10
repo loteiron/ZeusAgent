@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@zeus/ink": ["src/types/zeus-ink.d.ts"]
+    }
+  }
+}

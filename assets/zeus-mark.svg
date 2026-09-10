@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="ZeusAgent">
+  <rect width="256" height="256" rx="44" fill="#162743"/>
+  <rect x="12" y="12" width="232" height="232" rx="34" fill="none" stroke="#315B83" stroke-width="2"/>
+  <polygon points="54,56 202,56 202,86 54,86" fill="#92B9DD"/>
+  <polygon points="170,86 202,86 86,170 54,170" fill="#E6AB80"/>
+  <polygon points="54,170 202,170 202,200 54,200" fill="#92B9DD"/>
+</svg>

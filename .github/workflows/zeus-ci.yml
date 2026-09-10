@@ -1,0 +1,203 @@
+name: ZeusAgent source checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# No release uploads, deployments, PR comments, or repository writes.
+permissions:
+  contents: read
+
+concurrency:
+  group: zeus-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  source:
+    name: Public source boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Inspect selected Git source files
+        run: python scripts/github_source.py check
+
+  python:
+    name: Python · Linux · full default suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.11.33'
+          enable-cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.19.0'
+      - name: Install locked test dependencies
+        run: >-
+          uv sync --locked --python 3.12 --extra all --extra dev
+          --extra anthropic --extra mistral --extra fal --extra modal
+          --extra daytona --extra hindsight --extra parallel-web --extra messaging --extra wecom
+      - name: Run isolated Python tests without retries
+        run: |
+          set -euo pipefail
+          bash scripts/run_tests.sh -j 4 --file-timeout 300 --file-retries 0 -- --tb=short -ra | tee python-tests.log
+      - name: Retain results even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-linux-results
+          path: python-tests.log
+          retention-days: 14
+
+  platform:
+    name: Python · ${{ matrix.os }} · native OS contracts
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.11.33'
+          enable-cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.19.0'
+      - name: Install locked test dependencies
+        run: >-
+          uv sync --locked --python 3.12 --extra all --extra dev
+          --extra anthropic --extra mistral --extra fal --extra modal
+          --extra daytona --extra hindsight --extra parallel-web --extra messaging --extra wecom
+      - name: Run source distribution, launcher and hardening contracts
+        run: >-
+          bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0
+          tests/zeus_cli/test_source_distribution.py tests/zeus_cli/test_source_launcher.py
+          tests/zeus_cli/test_source_setup.py tests/zeus_cli/test_source_preflight.py
+          tests/zeus_cli/test_source_preflight_runtime.py tests/ci/test_github_source.py
+          tests/zeus_cli/test_import_argv_boundary.py tests/gateway/test_delivery_flood_finite.py
+          tests/test_cache_probe_recording.py
+          tests/gateway/test_process_stat_identity.py
+          tests/zeus_cli/test_process_ledger_persistence.py
+          tests/agent/test_bedrock_lazy_boundary.py tests/tools/test_tirith_download_privacy.py
+          tests/zeus_cli/test_single_query_exit_status.py
+          tests/tools/test_code_rpc_request_validation.py tests/zeus_cli/test_update_marker_validation.py
+          tests/zeus_cli/test_local_runtime_credentials.py tests/zeus_cli/test_local_runtime_key_identity.py
+          tests/zeus_cli/test_local_supervisor_stop_races.py tests/zeus_cli/test_local_supervisor_cleanup.py
+          tests/zeus_cli/test_local_adopted_restart.py -- --tb=short -ra
+      - name: Run tests on their actual operating system
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) marker=windows_only ;;
+            macOS) marker=macos_only ;;
+            *) exit 2 ;;
+          esac
+          uv run --no-sync python scripts/ci/list_os_marked_tests.py "$marker" > "$RUNNER_TEMP/os-tests.txt"
+          test -s "$RUNNER_TEMP/os-tests.txt"
+          selected=()
+          while IFS= read -r file; do selected+=("$file"); done < "$RUNNER_TEMP/os-tests.txt"
+          bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0 "${selected[@]}" -- -m "$marker and not integration" --tb=short -ra | tee os-tests.log
+          # Per-file deselection is valid; an entirely empty OS lane is not.
+          uv run --no-sync python -c 'import pathlib,re; text=pathlib.Path("os-tests.log").read_text(encoding="utf-8"); assert re.search(r"=== Summary: \d+ files, [1-9]\d* tests passed", text), "OS lane executed no passing tests"'
+      - name: Retain results even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-${{ matrix.os }}-results
+          path: os-tests.log
+          retention-days: 14
+
+  toolchain:
+    name: Source setup · ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.22.0', '24.14.1', '26.0.0']
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Reproduce the incompatible npm version on the actual operating system
+        working-directory: ${{ runner.temp }}
+        run: npm install --global npm@11.11.0 --no-audit --no-fund
+      - name: Refuse incompatible engines before creating a Python environment
+        run: |
+          python - <<'PY'
+          import os, pathlib, subprocess, sys, tempfile
+          with tempfile.TemporaryDirectory() as tmp:
+              state = pathlib.Path(tmp) / "Zeus veri Türkçe"
+              result = subprocess.run(
+                  [sys.executable, "scripts/setup_zeus.py", "--web", "--check"],
+                  env={**os.environ, "ZEUS_HOME": str(state)},
+                  capture_output=True, text=True, encoding="utf-8", errors="replace",
+              )
+              print(result.stdout)
+              print(result.stderr)
+              assert result.returncode == 2 and "EBADENGINE" in result.stderr
+              assert not state.exists(), "A prerequisite check must not install or change user state"
+          PY
+      - name: Install the supported npm version
+        working-directory: ${{ runner.temp }}
+        run: npm install --global npm@11.17.0 --no-audit --no-fund
+      - name: Accept the compatible pair without installing application packages
+        run: python scripts/setup_zeus.py --web --check
+
+  javascript:
+    name: JavaScript · types, builds, UI and Electron contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.19.0'
+      - name: Install locked workspaces, including native lifecycle scripts
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck all declaring workspaces
+        run: npm run typecheck --workspaces --if-present
+      - name: Build terminal, web, and desktop
+        run: |
+          npm run build --workspace @zeus/ink
+          npm run build --workspace ui-tui
+          npm run build --workspace web
+          npm run build --workspace apps/desktop
+      - name: Test terminal, web, and root contracts
+        run: |
+          npm run test --workspace ui-tui
+          npm run test --workspace web -- --maxWorkers=2
+          npm run test --workspace tests-js -- --maxWorkers=2
+      - name: Test desktop UI
+        run: npm run test:ui --workspace apps/desktop -- --maxWorkers=2
+      - name: Test Electron contracts with a real display server
+        run: xvfb-run -a npm run test:desktop:platforms --workspace apps/desktop -- --maxWorkers=2

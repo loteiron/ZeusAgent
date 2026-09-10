@@ -1,0 +1,33 @@
+/* The installer shares the Zeus desktop token system and follows OS appearance. */
+@import '../../desktop/src/styles.css';
+:root {
+  --dt-font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --dt-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+:root.dark {
+  color-scheme: dark;
+  --theme-foreground: #E5EDF7;
+  --theme-primary: #E6AB80;
+  --theme-secondary: #203650;
+  --theme-accent-soft: #203650;
+  --theme-midground: #92B9DD;
+  --theme-warm: #E6AB80;
+  --theme-background-seed: #101D31;
+  --theme-sidebar-seed: #172842;
+  --theme-card-seed: #172842;
+  --theme-elevated-seed: #203650;
+  --theme-bubble-seed: #203650;
+  --theme-neutral-chrome: #101D31;
+  --theme-neutral-sidebar: #172842;
+  --theme-neutral-card: #172842;
+  --dt-primary-foreground: #101D31;
+  --dt-destructive: #F18F9D;
+  --dt-destructive-foreground: #101D31;
+}
+.installer-heading { font-family: Bahnschrift, 'Segoe UI', system-ui, sans-serif; font-size: clamp(2rem, 4vw, 3.25rem); font-weight: 600; line-height: 1.1; letter-spacing: -0.025em; margin-bottom: 1.25rem; color: var(--ui-text-primary); }
+.installer-heading[data-tone='error'] { color: var(--dt-destructive); }
+.installer-panel { border: 1px solid var(--ui-stroke-secondary); border-radius: 12px; background: var(--dt-card); }
+.installer-kicker { color: var(--theme-midground); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.14em; }
+[data-slot='button'] { border-radius: 8px; }
+@keyframes zeus-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.zeus-fade-in { animation: zeus-fade-in 180ms ease-out both; }

@@ -1,0 +1,106 @@
+name: "🔧 Setup / Installation Help"
+description: Having trouble installing or configuring ZeusAgent? Ask here.
+title: "[Setup]: "
+labels: ["setup"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sorry you're having trouble! Please fill out the details below so we can help.
+
+        **Quick checks first:**
+        - Read this repository's README and use `python scripts/setup_zeus.py`
+        - Run `python scripts/launch_zeus.py doctor` locally if setup completed
+        - Include the exact source version/commit; this fork has no automatic release channel
+        - Review and redact diagnostic excerpts before sharing; never include keys or conversations
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's Going Wrong?
+      description: Describe what you're trying to do and where it fails.
+      placeholder: |
+        I ran `zeus setup` and selected Nous Portal, but when I try to
+        start the gateway I get...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps Taken
+      description: What did you do? Include the exact commands you ran.
+      placeholder: |
+        1. Extracted the source and ran `python scripts/setup_zeus.py --web`
+        2. Ran `python scripts/launch_zeus.py setup` and chose "Quick setup"
+        3. Selected OpenRouter, entered API key
+        4. Ran `zeus chat` and got error...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - Source archive + scripts/setup_zeus.py
+        - KUR-ZEUS.bat (Windows source setup)
+        - Manual clone + locked uv sync
+        - Other inherited installer or container (not a verified ZeusAgent release)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: Ubuntu 24.04 / macOS 15.2 / Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: Output of `python --version` (or `python3 --version`)
+      placeholder: "3.11.9"
+
+  - type: input
+    id: zeus-version
+    attributes:
+      label: ZeusAgent Version
+      description: Output of `zeus version` (if install got that far)
+      placeholder: "0.21.1 + zeus.1 (include commit if available)"
+
+  - type: textarea
+    id: debug-report
+    attributes:
+      label: Debug Report
+      description: |
+        Optional: run `python scripts/launch_zeus.py doctor` locally if available.
+        Share only relevant, manually reviewed and redacted lines. If installation
+        failed earlier, a minimal error excerpt is sufficient. Never include API keys,
+        private paths, personal data or conversation content; no external upload is required.
+      placeholder: |
+        Failing setup step and minimal redacted output.
+      render: shell
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Full Error Output
+      description: Paste the complete error message or traceback. This will be auto-formatted.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Already Tried
+      description: List any fixes or workarounds you've already attempted.
+      placeholder: |
+        - Reran `python scripts/setup_zeus.py --web` after correcting the reported error
+        - Checked Python/Node versions against README and package.json
+        - Checked that OPENROUTER_API_KEY is set in ~/.zeus/.env
