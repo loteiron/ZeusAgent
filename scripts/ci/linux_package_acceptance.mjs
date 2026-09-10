@@ -80,11 +80,18 @@ if (!desktopFirst) {
 const app = await _electron.launch({ executablePath: '/opt/ZeusAgent/ZeusAgent',
   args: ['--disable-gpu'], cwd, env, timeout: 25 * 60_000 });
 let identity, connection;
+let localInstallChoiceObserved = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(180_000);
   await page.waitForFunction(() => Boolean(window.zeusDesktop?.getConnection));
   // Desktop-first exercises the real install overlay and asynchronous bootstrap.
+  if (desktopFirst) {
+    const installLocal = page.getByRole('button', { name: /Install ZeusAgent locally/ });
+    await installLocal.waitFor({ state: 'visible', timeout: 60_000 });
+    await installLocal.click({ timeout: 60_000 });
+    localInstallChoiceObserved = true;
+  }
   await page.waitForFunction(async () => {
     const value = await window.zeusDesktop.getConnection();
     return Boolean(value.baseUrl && value.token);
@@ -129,6 +136,6 @@ await fs.writeFile(path.join(output, 'acceptance.json'), JSON.stringify({
   platform: process.platform, arch: process.arch, os: (await fs.readFile('/etc/os-release', 'utf8')),
   commit: stamp.commit, identity, connection, callerDirectoryPreserved: true,
   exitStatusPreserved: true, coldBootstrap: true, firstInterface: desktopFirst ? 'desktop' : 'cli', sharedRuntimeReused: true,
-  inferenceRequested: false, elapsedMs: Date.now() - before,
+  localInstallChoiceObserved, inferenceRequested: false, elapsedMs: Date.now() - before,
 }, null, 2));
 console.log('PASS: Ubuntu package cold CLI, real Desktop and shared private runtime');
