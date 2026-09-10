@@ -533,7 +533,8 @@ export default function App() {
           "bg-background-base",
         )}
         style={{
-          background: "var(--component-header-background)",
+          background:
+            "var(--component-header-background, var(--background-base))",
           borderImage: "var(--component-header-border-image)",
           clipPath: "var(--component-header-clip-path)",
         }}
@@ -592,7 +593,8 @@ export default function App() {
               collapsed && "lg:w-14",
             )}
             style={{
-              background: "var(--component-sidebar-background)",
+              background:
+                "var(--component-sidebar-background, var(--background-base))",
               clipPath: "var(--component-sidebar-clip-path)",
               borderImage: "var(--component-sidebar-border-image)",
             }}
