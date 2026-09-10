@@ -9,9 +9,12 @@ past that); see the **routing table** at the end and read the area file before e
 
 ## ZeusAgent source-fork overrides
 
-- This fork has no configured release channel. The active workflow is
-  `.github/workflows/zeus-ci.yml`; the 32 inherited workflows in
-  `.github/upstream-workflows/` are inactive reference material.
+- `.github/workflows/zeus-ci.yml` runs read-only source checks. The manually
+  dispatched `zeus-linux-package.yml` and `zeus-linux-cli.yml` workflows validate
+  Ubuntu packages and release commands with read-only permissions. Release assets
+  are published explicitly and manually; these workflows do not publish them.
+  The 32 inherited workflows in `.github/upstream-workflows/` remain inactive
+  reference material.
 - TDD and the observe/test/review loop are development methods, not runtime features.
   Record a real red test, apply the smallest fix, then verify the same and neighboring
   contracts. Never weaken safety controls or conceal failures to obtain green output.
