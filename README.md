@@ -148,10 +148,19 @@ zeus
 
 The installer verifies the release archive and private Node runtime, installs a
 launcher in `~/.local/bin`, and adds that directory to supported shell profiles.
-It uses `sudo` only when Ubuntu system dependencies are missing. It preserves an
-unrelated existing `zeus` launcher and supports `--no-modify-path` for custom shell
-setups. Runtime files live under `${XDG_DATA_HOME:-~/.local/share}/ZeusAgent`;
-conversations and settings live separately in `~/.zeus`.
+On a root SSH session, the same command installs missing system dependencies,
+uses the ordinary sudo caller or creates/reuses `zeususer`, and completes setup
+under that account. No password or sudo privileges are added to a newly created
+account. A root-owned `/usr/local/bin/zeus` command automatically runs Zeus as
+that user; use `zeus setup` and `zeus` directly. If the current directory is
+inaccessible to that user, the command starts in their home directory and tells
+you. Pass `--user NAME` to select an existing ordinary account explicitly.
+
+Normal-user installation uses `sudo` only for missing Ubuntu dependencies. An
+old global Zeus npm symlink is backed up when the root dispatcher replaces it;
+unrelated launchers are preserved. `--no-modify-path` skips shell-profile edits.
+Runtime files live under `${XDG_DATA_HOME:-~/.local/share}/ZeusAgent`;
+conversations and settings live separately in the installation user's `~/.zeus`.
 
 ## Install the command with npm
 

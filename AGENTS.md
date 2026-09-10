@@ -17,6 +17,8 @@ past that); see the **routing table** at the end and read the area file before e
   and transfers assets, never checks out source, executes payloads, or publishes.
   Release assets are published explicitly and manually; these workflows do not
   publish them.
+  `zeus-linux-installer.yml` is a manual, read-only Ubuntu root-install regression
+  check using the pinned published runtime; it never uploads release assets.
   The 32 inherited workflows in `.github/upstream-workflows/` remain inactive
   reference material.
 - TDD and the observe/test/review loop are development methods, not runtime features.

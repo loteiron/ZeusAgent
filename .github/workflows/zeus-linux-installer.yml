@@ -1,0 +1,88 @@
+name: ZeusAgent root installer acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  root-install:
+    name: Root VPS installation on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.2'
+      - name: Download immutable runtime fixtures and the original installer
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, urllib.request
+          assets = pathlib.Path(os.environ['RUNNER_TEMP']) / 'root-installer-assets'
+          assets.mkdir()
+          release = 'https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/'
+          def fetch(url, target, digest):
+              urllib.request.urlretrieve(url, target)
+              assert hashlib.sha256(target.read_bytes()).hexdigest() == digest, target.name
+          fetch(release + 'linux-runtime-manifest.json', assets / 'linux-runtime-manifest.json',
+                '1a8779527438803cc4cd611686871231bf7351763dce0cb29e7ff854a99a4254')
+          fetch(release + 'loteiron-zeus-agent-0.22.0.tgz', assets / 'loteiron-zeus-agent-0.22.0.tgz',
+                '3c4d9bba59f02914e0811c146270f854cfadbbc655b4b890d777921dfc69264a')
+          manifest = json.loads((assets / 'linux-runtime-manifest.json').read_text())
+          for asset in [manifest['source'], manifest['uv'], *manifest['tools'].values()]:
+              assert asset['file'] == pathlib.Path(asset['file']).name
+              assert asset['url'].startswith('https://')
+              fetch(asset['url'], assets / asset['file'], asset['sha256'])
+          # Keep the regression's before-image stable after the release asset is fixed.
+          before = pathlib.Path(os.environ['RUNNER_TEMP']) / 'before-installer' / 'scripts'
+          before.mkdir(parents=True)
+          url = 'https://raw.githubusercontent.com/loteiron/ZeusAgent/37f3f54362711a0a8903310f9cb46a4753042385/scripts/install-linux.sh'
+          urllib.request.urlretrieve(url, before / 'install-linux.sh')
+          PY
+      - name: Render old and new installers against the same published payload
+        run: |
+          cp scripts/stage_zeus_npm.mjs "$RUNNER_TEMP/before-installer/scripts/stage_zeus_npm.mjs"
+          node --input-type=module - <<'JS'
+          import path from 'node:path';
+          import { pathToFileURL } from 'node:url';
+          import { stageLinuxInstaller } from './scripts/stage_zeus_npm.mjs';
+          const base = process.env.RUNNER_TEMP;
+          const options = {
+            packagePath: path.join(base, 'root-installer-assets/loteiron-zeus-agent-0.22.0.tgz'),
+            linuxManifestPath: path.join(base, 'root-installer-assets/linux-runtime-manifest.json'),
+          };
+          const before = await import(pathToFileURL(path.join(base, 'before-installer/scripts/stage_zeus_npm.mjs')));
+          await before.stageLinuxInstaller({...options, outputPath: path.join(base, 'before-install-linux.sh')});
+          await stageLinuxInstaller({...options, outputPath: path.join(base, 'install-linux.sh')});
+          JS
+          bash -n "$RUNNER_TEMP/install-linux.sh"
+      - name: Reproduce root rejection and verify automatic installation with real users
+        run: |
+          sudo /usr/bin/python3 scripts/linux-root-installer-acceptance.py \
+            --installer "$RUNNER_TEMP/install-linux.sh" \
+            --before "$RUNNER_TEMP/before-install-linux.sh" \
+            --assets "$RUNNER_TEMP/root-installer-assets" \
+            --output "$RUNNER_TEMP/root-installer-acceptance.json"
+      - name: Retain installer and acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: root-installer-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/install-linux.sh
+            ${{ runner.temp }}/root-installer-acceptance.json
+            ${{ runner.temp }}/root-installer-acceptance.json.log
+          if-no-files-found: error
+          retention-days: 14
