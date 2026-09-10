@@ -4,6 +4,8 @@
 Uses the published package and runtime assets, real Unix accounts, real Node and
 the real Zeus runtime. This script must never run on a user's workstation/server:
 it temporarily owns /usr/local/bin/zeus and creates the zeususer account.
+The hosted runner's /usr/local directory permissions are temporarily set to
+stock root-owned 0755 permissions and restored after the fixture is removed.
 """
 
 from __future__ import annotations
@@ -77,6 +79,34 @@ class Acceptance:
         self.fixture_uid: int | None = None
         self.global_created = False
         self.original_backups = set(GLOBAL_COMMAND.parent.glob(".zeus-npm-backup.*"))
+        self.host_directories: list[tuple[Path, os.stat_result]] = []
+
+    def prepare_system_directories(self) -> None:
+        # GitHub's shared tool directory can be owned/writable by its runner
+        # account. Keep the production guard intact: this disposable fixture
+        # explicitly models root-owned system directories on a fresh VPS.
+        for directory in [Path("/usr/local"), GLOBAL_COMMAND.parent]:
+            require(not directory.is_symlink() and directory.is_dir(),
+                    f"Refusing to alter a linked/non-directory system path: {directory}")
+            self.host_directories.append((directory, directory.stat()))
+        self.receipt["host_directory_fixture"] = [
+            {"path": str(directory), "original_uid": original.st_uid,
+             "original_gid": original.st_gid, "original_mode": oct(stat.S_IMODE(original.st_mode)),
+             "test_uid": 0, "test_gid": 0, "test_mode": "0o755"}
+            for directory, original in self.host_directories
+        ]
+        for directory, _ in self.host_directories:
+            os.chown(directory, 0, 0)
+            directory.chmod(0o755)
+
+    def restore_system_directories(self) -> None:
+        for directory, original in reversed(self.host_directories):
+            require(not directory.is_symlink(), f"System fixture became a symbolic link: {directory}")
+            current = directory.stat()
+            require((current.st_dev, current.st_ino) == (original.st_dev, original.st_ino),
+                    f"System fixture directory identity changed: {directory}")
+            os.chown(directory, original.st_uid, original.st_gid)
+            directory.chmod(stat.S_IMODE(original.st_mode))
 
     def run(self, command: list[str], *, cwd: Path | None = None,
             env: dict[str, str] | None = None, expected: int | None = 0,
@@ -169,6 +199,7 @@ class Acceptance:
         return {"caller": str(cwd), "observed": observed["workspace"]["root"], "exit_code": result.returncode, "root_invocation": root}
 
     def execute(self) -> None:
+        self.prepare_system_directories()
         self.prepare_actual_assets()
         before = self.run(["/bin/bash", str(self.args.before), "--assets", str(self.assets)], expected=2)
         require("Run as your normal user" in before.stderr, "Baseline must reproduce the user's root refusal")
@@ -292,7 +323,10 @@ def main() -> None:
     finally:
         acceptance.receipt["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         args.output.write_text(json.dumps(acceptance.receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        acceptance.cleanup()
+        try:
+            acceptance.cleanup()
+        finally:
+            acceptance.restore_system_directories()
     print(json.dumps(acceptance.receipt, indent=2, ensure_ascii=False))
 
 
