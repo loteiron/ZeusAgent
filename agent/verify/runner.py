@@ -24,6 +24,8 @@ from agent.verify.recipes import Recipe
 DEFAULT_PHASE_TIMEOUT = 600.0
 DEFAULT_READY_TIMEOUT = 60.0
 _TAIL_CHARS = 2000
+_PROCESS_TERMINATE_GRACE = 10.0
+_PROCESS_KILL_WAIT = 5.0
 PHASE_ORDER = ("bootstrap", "build", "test")
 # Project-authored shell commands; see module docstring.
 _SUBPROCESS_KW: dict[str, Any] = dict(
@@ -159,9 +161,9 @@ def _poll_readiness(url: str, timeout: float, interval: float = 1.0) -> tuple[bo
 
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     """Terminate the owned process tree on Windows or process group on POSIX."""
-    if proc.poll() is not None:
-        return
     if os.name == "nt":
+        if proc.poll() is not None:
+            return
         from agent.deadline import kill_process_tree
         kill_process_tree(proc.pid)
         try:
@@ -169,36 +171,56 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
         return
-    killpg = getattr(os, "killpg", None)
-    getpgid = getattr(os, "getpgid", None)
-    pgid = None
-    if killpg is not None and getpgid is not None:
-        try:
-            pgid = getpgid(proc.pid)
-        except (ProcessLookupError, PermissionError):
-            pass
+    import psutil
 
-    def stop(sig: int, fallback: Callable[[], None]) -> None:
-        if pgid is not None:
-            killpg(pgid, sig)  # windows-footgun: ok — POSIX-only branch (pgid only set when killpg exists)
-        else:
-            fallback()
+    # Both callers create a new session, so this PID is the owned group ID even
+    # after a shell/wrapper exits. Waiting only for that leader can return while
+    # its server still listens, and would skip escalation for a stubborn child.
+    pgid = proc.pid
+
+    def live_members() -> bool:
+        try:
+            os.killpg(pgid, 0)  # windows-footgun: ok — Windows returns above
+        except ProcessLookupError:
+            return False
+        for pid in psutil.pids():
+            try:
+                if os.getpgid(pid) != pgid:  # windows-footgun: ok — Windows returns above
+                    continue
+            except (ProcessLookupError, PermissionError):
+                continue
+            try:
+                if psutil.Process(pid).status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                    return True
+            except psutil.NoSuchProcess:
+                continue
+            except psutil.AccessDenied:
+                return True  # An unobservable owned member is not proof of exit.
+        return False
+
+    def wait_for_group(timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            proc.poll()  # Reap our leader; other members may be reparented.
+            if not live_members():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.02, remaining))
 
     try:
-        stop(signal.SIGTERM, proc.terminate)
-    except (ProcessLookupError, PermissionError):
+        os.killpg(pgid, signal.SIGTERM)  # windows-footgun: ok — Windows returns above
+    except ProcessLookupError:
+        proc.poll()
         return
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
+    if not wait_for_group(_PROCESS_TERMINATE_GRACE):
         try:
-            stop(getattr(signal, "SIGKILL", signal.SIGTERM), proc.kill)
-        except (ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — Windows returns above
+        except ProcessLookupError:
             pass
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        if not wait_for_group(_PROCESS_KILL_WAIT):
+            raise RuntimeError("Verification could not stop its owned process group")
 
 
 def _captured_tail(capture) -> str:

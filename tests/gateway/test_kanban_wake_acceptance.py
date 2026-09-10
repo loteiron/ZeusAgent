@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from evals.heartbeat_idle_wire import WireAdapter
+from evals.heartbeat_idle_wire import WireAdapter, drain_background_tasks as drain
 from gateway.config import Platform, PlatformConfig
 from gateway.kanban_watchers_notifier import _KanbanNotification, _notifier_collect
 from gateway.platforms.event import MessageEvent
@@ -32,9 +32,21 @@ def setup_route(raft=False):
     return runner, adapter, source, build_session_key(source)
 
 
-async def drain(adapter):
-    while adapter._background_tasks:
-        await asyncio.gather(*list(adapter._background_tasks))
+@pytest.mark.asyncio
+async def test_drain_allows_completed_task_discard_callbacks_to_run():
+    _, adapter, _, key = setup_route()
+
+    async def completed():
+        return "delivered"
+
+    task = asyncio.create_task(completed())
+    await task
+    # Reproduce the scheduler boundary deterministically: a completed owner is
+    # still tracked until add_done_callback's scheduled discard gets its turn.
+    assert adapter._track_session_task(key, task)
+    assert task in adapter._background_tasks
+    await drain(adapter)
+    assert not adapter._background_tasks
 
 
 @pytest.mark.asyncio

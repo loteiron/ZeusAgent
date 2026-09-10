@@ -83,7 +83,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
+        include:
+          - os: ubuntu-22.04
+            first: desktop
+          - os: ubuntu-24.04
+            first: cli
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -112,6 +116,7 @@ jobs:
         env:
           ZEUS_ACCEPTANCE_DRIVER: ${{ runner.temp }}/zeus-package-driver
           ZEUS_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/zeus-ubuntu-evidence
+          ZEUS_ACCEPTANCE_FIRST: ${{ matrix.first }}
         run: xvfb-run -a node scripts/ci/linux_package_acceptance.mjs
       - name: Reinstall the same deb without altering saved user data
         run: |

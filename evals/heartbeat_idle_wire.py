@@ -39,6 +39,16 @@ class WireAdapter(BasePlatformAdapter):
         return SendResult(success=True, message_id=str(len(self.wire)))
 
 
+async def drain_background_tasks(adapter):
+    """Drain real adapter work, including scheduled task-discard callbacks."""
+    while adapter._background_tasks:
+        # gather() over already-completed tasks can finish eagerly on Python
+        # 3.12. Give their queued discard callbacks a turn before resampling.
+        await asyncio.sleep(0)
+        if adapter._background_tasks:
+            await asyncio.gather(*list(adapter._background_tasks))
+
+
 async def main(base_poller):
     assert os.environ.get("ZEUS_HOME"), "Use a temporary ZEUS_HOME"
     runner = object.__new__(GatewayRunner)
@@ -65,10 +75,6 @@ async def main(base_poller):
         await release.wait()
         return "wire reply"
 
-    async def drain():
-        while adapter._background_tasks:
-            await asyncio.gather(*list(adapter._background_tasks))
-
     def snapshot():
         return {"turns": len(received), "queue_depth": runner._queue_depth(key, adapter=adapter),
                 "fire_count": heartbeat.HeartbeatManager("wire-session").state.fire_count}
@@ -84,7 +90,7 @@ async def main(base_poller):
         print(json.dumps({"phase": "15 minute polls, first turn held", **snapshot()}))
         release.set()
         await adapter.handle_message(MessageEvent(text="real-user-wire-input", source=source))
-        await drain()
+        await drain_background_tasks(adapter)
         print(json.dumps({"phase": "user wake drain", "wire_sends": len(adapter.wire), **snapshot()}))
         if not base_poller:
             assert len(received) == 2 and len(adapter.wire) == 2
@@ -95,7 +101,7 @@ async def main(base_poller):
             clock.now += 900
             for _ in range(5):
                 await runner._heartbeat_poll_once(watch)
-                await drain()
+                await drain_background_tasks(adapter)
             assert len(received) - before == 1
             assert heartbeat.HeartbeatManager("wire-session").state.fire_count == 1
             print(json.dumps({"phase": "idle 15-minute gap + 5 same-time polls", "new_turns": 1,
@@ -107,7 +113,7 @@ async def main(base_poller):
             clock.now += 60
             await runner._heartbeat_poll_once(watch)
             assert key in adapter._active_sessions and recovery == []
-            await drain()
+            await drain_background_tasks(adapter)
             print(json.dumps({"phase": "pinned route", "recovery_calls": len(recovery)}))
             # Admission can be cancelled before the fake agent boundary is reached.
             clock.now += 60
@@ -115,7 +121,7 @@ async def main(base_poller):
             turns_before = len(received)
             await runner._heartbeat_poll_once(watch)
             await adapter.cancel_session_processing(key)
-            await drain()
+            await drain_background_tasks(adapter)
             assert len(received) == turns_before
             assert heartbeat.HeartbeatManager("wire-session").state.to_json() == before
             print(json.dumps({"phase": "cancelled admission", "claim_refunded": True}))

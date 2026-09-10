@@ -62,9 +62,9 @@ def stage(root: Path, cache: Path, output: Path, *, allow_dirty: bool = False) -
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=root)
     if status.strip() and not allow_dirty:
         raise ValueError("Commit the reviewed source before staging a release (or use --allow-dirty for local QA only).")
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    version = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
-    if json.loads((root / "apps/desktop/package.json").read_text("utf-8"))["version"] != version:
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, encoding="utf-8").strip()
+    version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    if json.loads((root / "apps/desktop/package.json").read_text(encoding="utf-8"))["version"] != version:
         raise ValueError("Desktop and backend versions must agree.")
     verified = {name: verify_tool(cache, pin) for name, pin in PINS.items()}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +104,7 @@ def stage(root: Path, cache: Path, output: Path, *, allow_dirty: bool = False) -
             "uv": PINS["uv"], "tools": {"node": PINS["node"]},
         }
         (payload / "linux-runtime-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        if subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip() != commit:
+        if subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, encoding="utf-8").strip() != commit:
             raise ValueError("Source commit changed during release staging.")
         if not allow_dirty and subprocess.check_output(["git", "status", "--porcelain"], cwd=root).strip():
             raise ValueError("Source changed during release staging.")

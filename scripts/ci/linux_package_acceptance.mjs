@@ -47,33 +47,48 @@ async function command(label, args, expected = 0) {
 }
 
 const before = Date.now();
-assert.match(await command('cold-cli-version', ['--version']), /0\.22\.0/);
-await command('cli-help', ['--help']);
-const detection = await command('cli-project-directory', ['verify', '--detect-only', '--json'], 1);
-const noRecipe = detection.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).find(row => row?.error === 'no-recipe');
-assert.equal(noRecipe?.root, cwd, 'Launcher must retain a caller directory containing spaces and Unicode');
-assert.match(await command('cli-update-plan', ['update', '--plan']), /zeus-linux-release/);
+const desktopFirst = process.env.ZEUS_ACCEPTANCE_FIRST === 'desktop';
+async function probeCli() {
+  assert.match(await command('cli-version', ['--version']), /0\.22\.0/);
+  await command('cli-help', ['--help']);
+  const detection = await command('cli-project-directory', ['verify', '--detect-only', '--json'], 1);
+  const noRecipe = detection.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).find(row => row?.error === 'no-recipe');
+  assert.equal(noRecipe?.root, cwd, 'Launcher must retain a caller directory containing spaces and Unicode');
+  assert.match(await command('cli-update-plan', ['update', '--plan']), /zeus-linux-release/);
+}
 await fs.mkdir(env.ZEUS_HOME, { recursive: true });
 await fs.writeFile(path.join(env.ZEUS_HOME, 'preserved.txt'), 'keep this through package upgrade and removal\n');
 const runtimeDirectory = path.join(env.XDG_DATA_HOME, 'ZeusAgent', 'runtimes');
-const runtimeNames = await fs.readdir(runtimeDirectory);
-assert.equal(runtimeNames.length, 1);
-const readyPath = path.join(runtimeDirectory, runtimeNames[0], 'ready.json');
-const readyBefore = await fs.readFile(readyPath, 'utf8');
+let readyPath, readyBefore;
+async function captureRuntime() {
+  const names = await fs.readdir(runtimeDirectory);
+  assert.equal(names.length, 1);
+  readyPath = path.join(runtimeDirectory, names[0], 'ready.json');
+  readyBefore = await fs.readFile(readyPath, 'utf8');
+  assert.equal(JSON.parse(readyBefore).commit, manifest.commit);
+}
 const stamp = JSON.parse(await fs.readFile('/opt/ZeusAgent/resources/install-stamp.json', 'utf8'));
 const manifest = JSON.parse(await fs.readFile('/opt/ZeusAgent/resources/backend/runtime-manifest.json', 'utf8'));
 assert.equal(stamp.dirty, false);
 assert.equal(stamp.commit, manifest.commit);
 assert.equal(stamp.commit, process.env.GITHUB_SHA);
-assert.equal(JSON.parse(readyBefore).commit, manifest.commit);
+if (!desktopFirst) {
+  await probeCli();
+  await captureRuntime();
+}
 
 const app = await _electron.launch({ executablePath: '/opt/ZeusAgent/ZeusAgent',
-  args: ['--disable-gpu'], cwd, env, timeout: 180_000 });
+  args: ['--disable-gpu'], cwd, env, timeout: 25 * 60_000 });
 let identity, connection;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(180_000);
   await page.waitForFunction(() => Boolean(window.zeusDesktop?.getConnection));
+  // Desktop-first exercises the real install overlay and asynchronous bootstrap.
+  await page.waitForFunction(async () => {
+    const value = await window.zeusDesktop.getConnection();
+    return Boolean(value.baseUrl && value.token);
+  }, undefined, { timeout: 25 * 60_000 });
   connection = await page.evaluate(async () => {
     const value = await window.zeusDesktop.getConnection();
     return { mode: value.mode, source: value.source, hasUrl: Boolean(value.baseUrl), hasToken: Boolean(value.token) };
@@ -99,14 +114,21 @@ try {
     return true;
   });
   await page.screenshot({ path: path.join(output, 'ZeusAgent-Ubuntu-Desktop.png'), animations: 'disabled' });
+} catch (error) {
+  await app.windows()[0]?.screenshot({ path: path.join(output, 'ZeusAgent-Ubuntu-failure.png'), animations: 'disabled' }).catch(() => {});
+  throw error;
 } finally {
   await app.close();
 }
-assert.equal(await fs.readFile(readyPath, 'utf8'), readyBefore, 'Desktop must reuse the CLI runtime without provisioning again');
+if (desktopFirst) {
+  await captureRuntime();
+  await probeCli();
+}
+assert.equal(await fs.readFile(readyPath, 'utf8'), readyBefore, 'The second interface must reuse the first runtime without provisioning again');
 await fs.writeFile(path.join(output, 'acceptance.json'), JSON.stringify({
   platform: process.platform, arch: process.arch, os: (await fs.readFile('/etc/os-release', 'utf8')),
   commit: stamp.commit, identity, connection, callerDirectoryPreserved: true,
-  exitStatusPreserved: true, coldBootstrap: true, desktopReusedCliRuntime: true,
+  exitStatusPreserved: true, coldBootstrap: true, firstInterface: desktopFirst ? 'desktop' : 'cli', sharedRuntimeReused: true,
   inferenceRequested: false, elapsedMs: Date.now() - before,
 }, null, 2));
 console.log('PASS: Ubuntu package cold CLI, real Desktop and shared private runtime');
