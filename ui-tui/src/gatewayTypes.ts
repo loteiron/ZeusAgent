@@ -46,6 +46,29 @@ export interface SlashExecResponse {
   warning?: string
 }
 
+/** Read-only evidence. Status/freshness/comparison are owned by the backend. */
+export interface VerificationStatusResponse {
+  verification?: {
+    status: string
+    session_id: string
+    root: string
+    summary?: { total: number; passed: number; failed: number; stale: number; unknown: number }
+    workspace?: { root: string; reason: string; changed_paths: string[] }
+    baseline?: { created_at: string; check_count: number } | null
+    checks: Array<{
+      command: string
+      status: 'passed' | 'failed' | 'running'
+      freshness: 'current' | 'stale' | 'unknown'
+      comparison: 'regression' | 'fixed' | 'persistent_failure' | 'unchanged' | 'new' | 'incomparable'
+      scope: string
+      exit_code: number | null
+      created_at: string
+      cwd: string
+      output_summary: string
+    }>
+  }
+}
+
 // ── Remote Spending (Phase 2b) ───────────────────────────────────────
 
 // Wire shapes now live in @zeus/shared for reuse by TypeScript clients.

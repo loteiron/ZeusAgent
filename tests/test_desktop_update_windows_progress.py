@@ -58,7 +58,8 @@ def _read_progress(url: str, deadline: float) -> dict[str, object]:
     )
 
 
-def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path) -> None:
+@pytest.mark.parametrize("slow_focus_compiler", [False, True])
+def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path, slow_focus_compiler: bool) -> None:
     powershell = shutil.which("powershell.exe")
     assert powershell, "Windows updater tests require Windows PowerShell."
 
@@ -76,21 +77,34 @@ def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path) -> None
     # whole window comfortably inside the hold.
     env["ZEUS_SELFTEST_HOLD_SECONDS"] = "30"
 
+    command = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+    if slow_focus_compiler:
+        # Reproduce cold Add-Type startup independently of runner load. A
+        # foreground-window helper is not a dependency of the HTTP listener.
+        wrapper = tmp_path / "slow-focus-compiler.ps1"
+        wrapper.write_text(
+            "param([string]$Target)\n"
+            "function Add-Type {\n"
+            "  if ($args -contains 'ZeusAgentHandoff') {\n"
+            "    Write-Host 'SLOW-FOCUS-COMPILER-START'\n"
+            "    Start-Sleep -Seconds 25\n"
+            "  }\n"
+            "  Microsoft.PowerShell.Utility\\Add-Type @args\n"
+            "}\n"
+            "& $Target -SelfTestUi -NoUi\n",
+            encoding="utf-8",
+        )
+        command += [str(wrapper), "-Target", str(WINDOWS_UPDATE_PS1)]
+    else:
+        command += [str(WINDOWS_UPDATE_PS1), "-SelfTestUi", "-NoUi"]
+
     with output_path.open("wb") as output:
         process = subprocess.Popen(
-            [
-                powershell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(WINDOWS_UPDATE_PS1),
-                "-SelfTestUi",
-                "-NoUi",
-            ],
+            command,
             stdout=output,
             stderr=subprocess.STDOUT,
             env=env,
+            cwd=tmp_path,
         )
 
     try:

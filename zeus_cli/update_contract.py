@@ -42,6 +42,30 @@ def evaluate_update_admission(project_root: Path) -> Optional[UpdateRefusal]:
     ``None`` means the install is eligible for in-place update (git checkout or unknown-but-
     mutable). Never raises; on any internal error it falls back to the heuristic layer only.
     """
+    # Versioned Windows release runtimes are immutable. Marker presence is the
+    # boundary, including malformed/unreadable markers: damage must never admit
+    # this directory into the source updater or its upstream ZIP fallback.
+    marker = Path(project_root) / ".zeus-runtime.json"
+    try:
+        marker.lstat()
+        packaged = True
+    except FileNotFoundError:
+        packaged = False
+    except OSError:
+        packaged = True
+    if packaged:
+        releases = "https://github.com/loteiron/ZeusAgent/releases/latest"
+        return UpdateRefusal(
+            code="zeus-windows-release",
+            message=(
+                "This ZeusAgent runtime is managed by the Windows release package.\n"
+                "Install a newer ZeusAgent setup or npm package from the release page:\n"
+                f"  {releases}\n"
+                "Your Zeus settings and conversations are retained."
+            ),
+            update_command=releases,
+        )
+
     # Layer 1: baked provenance marker — authoritative when present.
     try:
         from zeus_cli.image_provenance import read_image_provenance

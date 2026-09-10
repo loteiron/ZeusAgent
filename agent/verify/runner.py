@@ -120,20 +120,41 @@ def _run_phase_command(
     return PhaseResult(phase, command, exit_code, duration, _tail(output), timed_out)
 
 
+class _ReadinessRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A 3xx is readiness evidence itself, not permission to spend another
+        # request budget following redirects (possibly off the local server).
+        return None
+
+
 def _poll_readiness(url: str, timeout: float, interval: float = 1.0) -> tuple[bool, int | None, str | None]:
     deadline = time.monotonic() + timeout
     last_error: str | None = None
-    while time.monotonic() < deadline:
+    last_status: int | None = None
+    # Readiness belongs to the process started on loopback. A corporate proxy
+    # returning a login/error page is not evidence about that process.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _ReadinessRedirectHandler())
+    while (remaining := deadline - time.monotonic()) > 0:
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                return True, resp.status, None
+            with opener.open(url, timeout=min(5.0, remaining)) as resp:
+                last_status = resp.status
+                if 200 <= last_status < 400:
+                    return True, last_status, None
+                last_error = f"HTTP {last_status}: readiness endpoint is not healthy"
         except urllib.error.HTTPError as exc:
-            # The server answered — it is up, even if it returned 4xx/5xx.
-            return True, exc.code, None
+            try:
+                last_status = exc.code
+                if 200 <= last_status < 400:
+                    return True, last_status, None
+                last_error = f"HTTP {last_status}: {exc.reason}"
+            finally:
+                exc.close()
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             last_error = str(exc)
-        time.sleep(interval)
-    return False, None, last_error
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(max(0.0, interval), remaining))
+    return False, last_status, last_error or "Readiness timed out before a healthy HTTP response"
 
 
 def _terminate_process_group(proc: subprocess.Popen) -> None:

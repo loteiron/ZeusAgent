@@ -2,7 +2,7 @@
   "name": "zeus",
   "productName": "ZeusAgent",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.22.0",
   "description": "Native desktop shell for ZeusAgent.",
   "author": "ZeusAgent contributors; upstream: Nous Research",
   "repository": {
@@ -220,6 +220,19 @@
       {
         "from": "assets/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "installer",
+        "to": "installer",
+        "filter": [
+          "zeus.cmd",
+          "register-cli.ps1",
+          "cli-path.psm1"
+        ]
+      },
+      {
+        "from": "../../packages/zeus-cli/bin/zeus.mjs",
+        "to": "cli/zeus.mjs"
       }
     ],
     "asar": true,
@@ -278,6 +291,12 @@
       ]
     },
     "win": {
+      "extraResources": [
+        {
+          "from": "build/backend",
+          "to": "backend"
+        }
+      ],
       "target": [
         "nsis",
         "msi"
@@ -295,9 +314,11 @@
       ]
     },
     "nsis": {
+      "include": "installer/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
+      "allowElevation": false,
       "shortcutName": "ZeusAgent",
       "uninstallDisplayName": "ZeusAgent",
       "warningsAsErrors": false

@@ -373,6 +373,7 @@ class RetryRestartVerdict:
     current_turn_user_idx: Any
     final_response: Any
     retry_count: Any
+    restart_count: Any
     api_call_count: Any
     _preflight_compression_blocked: Any
     _turn_exit_reason: Any
@@ -381,13 +382,16 @@ class RetryRestartVerdict:
 def apply_retry_restarts(
     agent: Any, *, _retry: Any, response: Any, interrupted: Any, messages: Any,
     conversation_history: Any, user_message: Any, api_kwargs: Any, current_turn_user_idx: Any,
-    final_response: Any, retry_count: Any, api_call_count: Any, length_continue_retries: Any,
+    final_response: Any, retry_count: Any, max_retries: Any, restart_count: Any,
+    api_call_count: Any, length_continue_retries: Any,
     _preflight_compression_blocked: Any, _turn_exit_reason: Any,
 ) -> RetryRestartVerdict:
     """Consume the ``TurnRetryState`` restart flags after the retry loop, in the original
     priority order. Refunds the iteration budget/count for restarts that produced no valid
     assistant item; ``restart_with_rebuilt_messages`` is the single consumer that clears
-    ``_preflight_compression_blocked`` so the fallback gets a fresh preflight (#84733)."""
+    ``_preflight_compression_blocked`` so the fallback gets a fresh preflight (#84733).
+    Refunded redirects/fallbacks share a per-turn cap; otherwise a repeated restart
+    can bypass both the API-attempt counter and the iteration budget forever."""
     from agent.conversation_loop import (
         _HANDOFF_SKIP_FINAL_RESPONSE, _should_skip_model_call_for_reference_handoff
     )
@@ -395,12 +399,23 @@ def apply_retry_restarts(
     def _verdict(action: str) -> RetryRestartVerdict:
         return RetryRestartVerdict(
             action=action, current_turn_user_idx=current_turn_user_idx,
-            final_response=final_response, retry_count=retry_count, api_call_count=api_call_count,
+            final_response=final_response, retry_count=retry_count, restart_count=restart_count,
+            api_call_count=api_call_count,
             _preflight_compression_blocked=_preflight_compression_blocked,
             _turn_exit_reason=_turn_exit_reason,
         )
 
     if _retry.restart_with_redirected_messages:
+        restart_count += 1
+        if restart_count > max_retries:
+            _turn_exit_reason = "redirect_restart_limit_exceeded"
+            logger.warning("Redirect restart limit (%s) exceeded; ending the turn", max_retries)
+            # The last correction was not applied. Finalization delivers pending
+            # steer as the next user turn instead of clearing and losing it.
+            unapplied = agent._drain_pending_redirect()
+            if unapplied:
+                agent.steer(unapplied)
+            return _verdict("break")
         # Cancelled request produced no valid assistant item: reuse the same logical
         # iteration after the outer loop appends partial context + correction.
         api_call_count -= 1
@@ -443,6 +458,11 @@ def apply_retry_restarts(
         return _verdict("continue")
 
     if _retry.restart_with_rebuilt_messages:
+        restart_count += 1
+        if restart_count > max_retries:
+            _turn_exit_reason = "rebuilt_restart_limit_exceeded"
+            logger.warning("Fallback restart limit (%s) exceeded; ending the turn", max_retries)
+            return _verdict("break")
         # A stall/failure escalated to the fallback chain: re-issue against the
         # active fallback provider, refunding budget/count for the stalled attempt.
         api_call_count -= 1

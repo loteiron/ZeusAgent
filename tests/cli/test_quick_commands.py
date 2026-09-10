@@ -1,6 +1,9 @@
 """Tests for user-defined quick commands that bypass the agent loop."""
 import os
 import subprocess
+import sys
+import shlex
+import json
 from unittest.mock import MagicMock, patch
 from rich.text import Text
 import pytest
@@ -78,17 +81,14 @@ class TestGatewayQuickCommands:
     """Test quick command dispatch in GatewayRunner._handle_message."""
 
     def _make_event(self, command, args=""):
-        event = MagicMock()
-        event.get_command.return_value = command
-        event.get_command_args.return_value = args
-        event.text = f"/{command} {args}".strip()
-        event.source = MagicMock()
-        event.source.user_id = "test_user"
-        event.source.user_name = "Test User"
-        event.source.platform.value = "telegram"
-        event.source.chat_type = "dm"
-        event.source.chat_id = "123"
-        return event
+        from gateway.config import Platform
+        from gateway.platforms.event import MessageEvent
+        from gateway.session import SessionSource
+        # Typed messages have empty metadata. A free-form MagicMock invents a
+        # truthy session-control binding and stops before the command executes.
+        return MessageEvent(text=f"/{command} {args}".strip(), source=SessionSource(
+            platform=Platform.TELEGRAM, chat_id="123", chat_type="dm",
+            user_id="test_user", user_name="Test User"))
 
     @pytest.mark.asyncio
     async def test_exec_command_returns_output(self):
@@ -118,6 +118,7 @@ class TestGatewayQuickCommands:
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-secret-12345"}):
             result = await runner._handle_message(event)
 
+        assert "PATH=" in result or "Path=" in result, "The command never ran"
         assert "sk-or-secret-12345" not in result, \
             "Quick command leaked OPENROUTER_API_KEY — exec runs without env sanitization"
 
@@ -131,7 +132,7 @@ class TestGatewayQuickCommands:
         monkeypatch.setattr("agent.redact._REDACT_ENABLED", True)
 
         runner = GatewayRunner.__new__(GatewayRunner)
-        runner.config = {"quick_commands": {"token": {"type": "exec", "command": "echo sk-ant-api03-supersecretkey1234567890"}}}
+        runner.config = {"quick_commands": {"token": {"type": "exec", "command": "echo QUICK_RAN sk-ant-api03-supersecretkey1234567890"}}}
         runner._running_agents = {}
         runner._pending_messages = {}
         runner._is_user_authorized = MagicMock(return_value=True)
@@ -139,25 +140,64 @@ class TestGatewayQuickCommands:
         event = self._make_event("token")
         result = await runner._handle_message(event)
 
+        assert "QUICK_RAN" in result, "The command never reached output redaction"
         assert "supersecretkey1234567890" not in result, \
             "Quick command output not redacted — raw API key returned to user"
 
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_error(self):
+    @pytest.mark.parametrize("interruption", ["timeout", "cancel"])
+    async def test_interruption_terminates_its_process_tree(self, tmp_path, monkeypatch, interruption):
         from gateway.run import GatewayRunner
+        from agent.deadline import kill_process_tree
         import asyncio
+        import psutil
+        script = tmp_path / "slow.py"
+        pids_file = tmp_path / "pids.json"
+        script.write_text(
+            "import json,os,subprocess,sys,time\n"
+            "from pathlib import Path\n"
+            "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n"
+            "Path(sys.argv[1]).write_text(json.dumps([os.getpid(),child.pid]))\n"
+            "time.sleep(60)\n", encoding="utf-8")
+        argv = [sys.executable, str(script), str(pids_file)]
+        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
         runner = GatewayRunner.__new__(GatewayRunner)
-        runner.config = {"quick_commands": {"slow": {"type": "exec", "command": "sleep 100"}}}
+        runner.config = {"quick_commands": {"slow": {"type": "exec", "command": command}}}
         runner._running_agents = {}
         runner._pending_messages = {}
         runner._is_user_authorized = MagicMock(return_value=True)
 
         event = self._make_event("slow")
-        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            result = await runner._handle_message(event)
-        assert result is not None
-        assert "timed out" in result.lower()
+        original_wait = asyncio.wait_for
+
+        async def shorten_command_timeout(awaitable, timeout):
+            if timeout == 30:
+                for _ in range(200):
+                    if pids_file.exists():
+                        break
+                    await asyncio.sleep(.025)
+                if interruption == "cancel":
+                    asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+                    return await original_wait(awaitable, timeout=30)
+                return await original_wait(awaitable, timeout=.05)
+            return await original_wait(awaitable, timeout=timeout)
+
+        monkeypatch.setattr(asyncio, "wait_for", shorten_command_timeout)
+        try:
+            if interruption == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await runner._handle_message(event)
+            else:
+                result = await runner._handle_message(event)
+                assert result is not None and "timed out" in result.lower()
+            pids = json.loads(pids_file.read_text())
+            assert all(not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE for pid in pids)
+        finally:
+            if pids_file.exists():
+                for pid in json.loads(pids_file.read_text()):
+                    if psutil.pid_exists(pid):
+                        kill_process_tree(pid)
 
     @pytest.mark.asyncio
     async def test_gateway_config_object_supports_quick_commands(self):

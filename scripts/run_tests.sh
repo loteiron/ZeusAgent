@@ -112,14 +112,23 @@ fi
 # `env -i` forwards HOME, which is enough on POSIX. Native Windows CPython
 # resolves Path.home() from USERPROFILE (or HOMEDRIVE+HOMEPATH), stdlib
 # platform paths come from LOCALAPPDATA/APPDATA, ssl/sockets need SYSTEMROOT,
-# and tempfile needs TEMP/TMP. Dropping them breaks collection on native
+# and tempfile needs TEMP/TMP. SYSTEMDRIVE/PROGRAMDATA also keep Windows
+# registry-backed cache paths absolute instead of literal %SystemDrive% paths.
+# Dropping them breaks collection on native
 # Windows (issues #67385, #70813). These are location variables, not
 # credentials, so forwarding them keeps the isolation intent intact. Each is
 # only forwarded when actually set, so POSIX runs are byte-for-byte unchanged.
 WIN_ENV=()
-for _win_var in USERPROFILE HOMEDRIVE HOMEPATH LOCALAPPDATA APPDATA SYSTEMROOT TEMP TMP; do
-  if [ -n "${!_win_var:-}" ]; then
-    WIN_ENV+=("$_win_var=${!_win_var}")
+for _win_var in USERPROFILE HOMEDRIVE HOMEPATH LOCALAPPDATA APPDATA SYSTEMROOT SYSTEMDRIVE PROGRAMDATA TEMP TMP; do
+  _win_value="${!_win_var:-}"
+  # Git Bash normalizes some Windows names but preserves ProgramData's case.
+  if [ "$_win_var" = SYSTEMDRIVE ]; then
+    _win_value="${_win_value:-${SystemDrive:-}}"
+  elif [ "$_win_var" = PROGRAMDATA ]; then
+    _win_value="${_win_value:-${ProgramData:-}}"
+  fi
+  if [ -n "$_win_value" ]; then
+    WIN_ENV+=("$_win_var=$_win_value")
   fi
 done
 

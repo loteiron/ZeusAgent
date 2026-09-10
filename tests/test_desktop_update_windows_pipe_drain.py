@@ -205,7 +205,7 @@ def test_update_step_survives_pipe_leak_flood_and_live_child_stall(
         # of an opaque timeout.
         timeout=300,
         env=env,
-        cwd=str(REPO_ROOT),
+        cwd=tmp_path,
     )
 
     assert "PIPE-DRAIN SELF-TEST: PASS" in result.stdout, (

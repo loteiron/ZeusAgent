@@ -7,6 +7,31 @@ from pathlib import Path
 import sys
 
 
+def format_evidence_report(report: dict) -> str:
+    """Render backend-owned facts without recomputing outcome or freshness."""
+    workspace = report.get("workspace") or {}
+    lines = [f"Verification: {report['status']}",
+             f"Workspace: {workspace.get('root') or report.get('root') or '(unavailable)'}",
+             f"Session: {report.get('session_id') or '(unavailable)'}"]
+    if workspace.get("reason"):
+        lines.append(workspace["reason"])
+    summary = report.get("summary") or {}
+    if summary:
+        lines.append("Checks: {total} total | {passed} passed | {failed} failed | {stale} stale | {unknown} unknown".format(**summary))
+    for check in report.get("checks", []):
+        lines.extend(["", f"{check['status'].upper()} | {check['freshness']} | {check['comparison']} | {check['scope']}",
+                      check["command"], f"Exit: {check['exit_code'] if check['exit_code'] is not None else 'pending'} | {check['created_at']} | {check['cwd']}"])
+        if check.get("output_summary"):
+            lines.append(check["output_summary"])
+    if not report.get("checks"):
+        lines.append("No recorded checks for this workspace session. Run your project checks, then use /evidence again.")
+    if workspace.get("changed_paths"):
+        lines.extend(["", "Changed paths:", *[f"  {item}" for item in workspace["changed_paths"]]])
+    if report.get("baseline"):
+        lines.append(f"Baseline: {report['baseline']['created_at']} | {report['baseline']['check_count']} checks")
+    return "\n".join(lines)
+
+
 def run_evidence_command(args) -> int | None:
     """None delegates to the recipe runner; report actions never execute a recipe."""
     actions = [name for name in ("status", "capture_baseline", "clear_baseline") if getattr(args, name, False)]
@@ -37,15 +62,7 @@ def run_evidence_command(args) -> int | None:
     elif "error" in payload:
         print(f"error: {payload['error']}", file=sys.stderr)
     elif "verification" in payload:
-        report = payload["verification"]
-        print(f"Verification: {report['status']}\nWorkspace: {root}\nSession: {session}")
-        if report["workspace"].get("reason"):
-            print(report["workspace"]["reason"])
-        for check in report["checks"]:
-            print(f"  {check['status'].upper():<7} {check['freshness']:<7} "
-                  f"{check['scope']:<8} {check['comparison']:<18} {check['command']}")
-        if report.get("baseline"):
-            print(f"Baseline: {report['baseline']['created_at']}")
+        print(format_evidence_report(payload["verification"]))
     elif "baseline" in payload:
         print(f"Baseline saved: {payload['baseline']['check_count']} checks.")
     else:

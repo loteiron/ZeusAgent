@@ -144,6 +144,17 @@ def _collect_install_shape(plan: UpdatePlan) -> None:
                 if provenance.valid and provenance.manager:
                     plan.install_method = provenance.manager
         plan.update_mechanism = recommended_update_command_for_method(method)
+        # Plans must honor the same admission decision as the actual updater,
+        # including immutable release payloads without a Git checkout.
+        from zeus_cli.config import get_project_root
+        from zeus_cli.update_contract import evaluate_update_admission
+
+        refusal = evaluate_update_admission(get_project_root())
+        if refusal is not None:
+            plan.updatable_in_place = False
+            plan.update_mechanism = refusal.update_command
+            if refusal.code == "zeus-windows-release":
+                plan.install_method = refusal.code
 
 
 def _supervisor_classifier() -> Callable[[int], str]:

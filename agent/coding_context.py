@@ -54,7 +54,9 @@ _JS_LOCKFILES = (
     ("pnpm-lock.yaml", "pnpm"), ("bun.lockb", "bun"), ("bun.lock", "bun"), ("yarn.lock", "yarn"), ("package-lock.json", "npm"),
 )
 # package.json scripts / Makefile targets worth surfacing as verify commands.
-_VERIFY_TARGETS = ("test", "tests", "lint", "typecheck", "check", "build", "fmt", "format")
+# Formatting targets conventionally rewrite source; verification discovery must
+# not opt into those edits. An explicit project recipe can still request them.
+_VERIFY_TARGETS = ("test", "tests", "lint", "typecheck", "check", "build")
 _MAX_VERIFY_COMMANDS = 8
 _MAX_FACT_FILE_BYTES = 256 * 1024
 _GIT_TIMEOUT = 2.5
@@ -466,7 +468,8 @@ class ProjectFacts:
 def detect_project_facts(root: Path) -> ProjectFacts:
     """Detect manifests, package manager(s), verify commands, context files (single source of truth)."""
     verify: list[str] = []
-    if (root / "scripts" / "run_tests.sh").is_file():
+    has_project_runner = (root / "scripts" / "run_tests.sh").is_file()
+    if has_project_runner:
         verify.append("scripts/run_tests.sh")
     if (root / "package.json").is_file():
         try:
@@ -475,7 +478,7 @@ def detect_project_facts(root: Path) -> ProjectFacts:
             scripts = {}
         js_pm = next((pm for lock, pm in _JS_LOCKFILES if (root / lock).is_file()), "npm")
         verify.extend(f"{js_pm} run {name}" for name in _VERIFY_TARGETS if name in scripts)
-    if (root / "pytest.ini").is_file() or "[tool.pytest" in _read_small(root / "pyproject.toml"):
+    if not has_project_runner and ((root / "pytest.ini").is_file() or "[tool.pytest" in _read_small(root / "pyproject.toml")):
         verify.append("pytest")
     makefile = _read_small(root / "Makefile")
     verify.extend(

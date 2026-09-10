@@ -7,9 +7,16 @@ own glyph lines in the conversation thread).
 """
 
 from datetime import datetime, timedelta
-from types import SimpleNamespace
+import os
+import pytest
 
 from cli import ZeusAgentCLI
+from zeus_cli.goals import GoalManager
+
+
+@pytest.fixture(autouse=True)
+def isolated_goal_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEUS_HOME", str(tmp_path / "zeus"))
 
 
 def _make_cli(model: str = "anthropic/claude-sonnet-4-20250514"):
@@ -22,13 +29,14 @@ def _make_cli(model: str = "anthropic/claude-sonnet-4-20250514"):
 
 
 def _attach_goal(cli_obj, *, active: bool, turns_used: int = 3, max_turns: int = 20):
-    """Bind a fake GoalManager the way _get_goal_manager caches one."""
+    """Exercise the real session/workspace binding used by status refresh."""
     cli_obj.session_id = "sess-goal-test"
-    cli_obj._goal_manager = SimpleNamespace(
-        session_id="sess-goal-test",
-        is_active=lambda: active,
-        state=SimpleNamespace(turns_used=turns_used, max_turns=max_turns),
-    )
+    manager = GoalManager(session_id=cli_obj.session_id, workspace=os.getcwd())
+    state = manager.set("Render current goal progress", max_turns=max_turns)
+    state.turns_used = turns_used
+    if not active:
+        manager.pause()
+    cli_obj._goal_manager = manager
     return cli_obj
 
 
@@ -74,4 +82,3 @@ class TestStatusBarGoalSegment:
         text = cli_obj._build_status_bar_text(width=50)
 
         assert "⊙ goal" in text
-

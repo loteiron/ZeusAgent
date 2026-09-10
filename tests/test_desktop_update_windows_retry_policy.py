@@ -46,6 +46,7 @@ def test_retry_policy_distinguishes_self_lock_deferral(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        cwd=tmp_path,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr

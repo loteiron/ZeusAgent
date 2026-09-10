@@ -10,6 +10,7 @@ mutate ``agent`` / ``messages`` / ``api_messages`` in place. Logger name stays
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -60,6 +61,14 @@ def _image_error_max_dimension(error: Exception) -> Optional[int]:
             except Exception:
                 pass
     text = " ".join(parts).lower()
+    if "patches after processing" in text:
+        match = re.search(r"exceeding the limit of\s*(\d{2,7})", text)
+        if not match:
+            return None
+        # Codex image admission counts ceil(width/32) * ceil(height/32).
+        # This conservative side cap keeps even a square within that budget.
+        max_dimension = math.isqrt(int(match.group(1))) * 32
+        return max_dimension if 512 <= max_dimension <= 8000 else None
     if "image" not in text or "dimension" not in text or "max allowed size" not in text:
         return None
     match = re.search(r"max allowed size(?:\s+for [^:]+)?:\s*(\d{3,5})\s*pixels?", text)
@@ -726,7 +735,14 @@ def nonretryable_client_error_result(
             classified=classified, summary=_nonretryable_summary, messages=messages,
             api_call_count=api_call_count, provider=provider, base_url=base_url, model=model,
         )
-    return _failed_turn_result(_nonretryable_summary, messages, api_call_count, _nonretryable_summary)
+    result = _failed_turn_result(_nonretryable_summary, messages, api_call_count, _nonretryable_summary)
+    # Every terminal branch must retain the classifier's recovery decision;
+    # otherwise a rejected credential is rendered as a retryable provider error.
+    result.update({
+        "failure_reason": classified.reason.value,
+        "failure_retryable": bool(classified.retryable),
+    })
+    return result
 
 
 _STREAM_DROP_MARKERS = (

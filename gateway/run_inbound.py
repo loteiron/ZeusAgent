@@ -944,11 +944,13 @@ class GatewayInboundMixin:
     async def _hm_run_exec_quick_command(self, command: str, exec_cmd: str) -> str:
         """Run a ``type: exec`` quick command in the gateway process (30 s cap, sanitized env — the
         gateway process has every API key in os.environ; output is redacted too)."""
+        proc = None
         try:
             from tools.environments.local import build_subprocess_env
             proc = await asyncio.create_subprocess_shell(
                 exec_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 env=build_subprocess_env(),
+                start_new_session=os.name != "nt",
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             output = (stdout or stderr).decode().strip()
@@ -956,7 +958,18 @@ class GatewayInboundMixin:
                 from agent.redact import redact_sensitive_text
                 output = redact_sensitive_text(output)
             return output or "Command returned no output."
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, asyncio.CancelledError) as interruption:
+            if proc is not None and proc.returncode is None:
+                from agent.deadline import kill_process_tree
+
+                await asyncio.to_thread(kill_process_tree, proc.pid)
+                if proc.returncode is None:
+                    with suppress(ProcessLookupError):
+                        proc.kill()
+                with suppress(asyncio.TimeoutError, ProcessLookupError):
+                    await asyncio.wait_for(proc.communicate(), timeout=2)
+            if isinstance(interruption, asyncio.CancelledError):
+                raise
             return "Quick command timed out (30s)."
         except Exception as e:
             return f"Quick command error: {e}"

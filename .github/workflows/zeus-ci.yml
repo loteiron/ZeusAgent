@@ -2,6 +2,7 @@ name: ZeusAgent source checks
 
 on:
   push:
+    branches: [main, zeus-engineering]
   pull_request:
   workflow_dispatch:
 
@@ -127,6 +128,11 @@ jobs:
         run: >-
           bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0
           tests/agent/test_workspace_identity.py tests/agent/test_verification_revision.py
+          tests/agent/test_upstream_recovery_contracts.py tests/agent/test_verification_recipe_boundaries.py
+          tests/agent/test_upstream_clarify_pruning.py tests/run_agent/test_upstream_loop_bounds.py
+          tests/test_verify_http_readiness.py tests/ci/test_stage_windows_release.py
+          tests/zeus_cli/test_windows_release_update.py tests/zeus_cli/test_evidence_slash.py
+          tests/cli/test_quick_commands.py tests/cli/test_cli_status_bar_goal.py
           tests/agent/test_verification_stop.py tests/tools/test_process_verification_completion_lock.py
           tests/verify/test_environment_and_runner.py tests/verify/test_ledger_and_nudge_integration.py
           tests/verify/test_runner_cancellation.py
@@ -138,6 +144,11 @@ jobs:
           tests/gateway/test_telegram_command_integrity.py tests/gateway/test_telegram_session_controls.py
           tests/tools/test_terminal_cwd_echo.py tests/skills/test_zeus_engineering_skill.py
           tests/state/test_fts_runtime_rebuild.py tests/state/test_fts_constructor_recovery.py -- --tb=short -ra
+      - name: Verify Windows installer and npm command contracts
+        if: runner.os == 'Windows'
+        run: |
+          node --test scripts/windows-runtime.test.mjs scripts/stage_zeus_npm.test.mjs
+          bash scripts/run_tests.sh -j 2 --file-retries 0 tests/test_desktop_installer_cli_path_windows.py -- --tb=short
       - name: Retain results even on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

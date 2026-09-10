@@ -367,12 +367,12 @@ class ProcessSession:
     def mark_exited(self, exit_code, reason: str = "exited", source: str = "") -> None:
         """Record an exit. A kill that raced the observer already recorded its own
         exit_code/reason; never overwrite it."""
-        self.exited = True
         if self.completion_reason != "killed":
             self.exit_code = exit_code
             self.completion_reason = reason
             if source:
                 self.termination_source = source
+        self.exited = True
 
 
 # Watcher routing fields, in event-dict key order (``watcher_<key>`` on the session).
@@ -1893,8 +1893,12 @@ class ProcessRegistry(ProcessCheckpointMixin):
         """Exited ``notify_on_complete`` processes of ``owner_task_id`` whose result nobody read (no wait/log/poll).
         A child's completion notice is suppressed in the parent, so an unread exit is otherwise lost silently."""
         with self._lock:
-            return [s for s in self._finished.values()
-                    if s.owner_task_id == owner_task_id and s.notify_on_complete
+            # An observed exit stays in _running while evidence and the durable
+            # result are written. Child teardown must still account for its
+            # already-read stdout, without waiting behind source hashing.
+            sessions = {**self._running, **self._finished}
+            return [s for s in sessions.values()
+                    if s.exited and s.owner_task_id == owner_task_id and s.notify_on_complete
                     and s.id not in self._completion_consumed and s.id not in self._poll_observed]
 
     def transfer_ownership(self, session_id: str, *, from_owner: str, to_owner: str, to_task_id: str,

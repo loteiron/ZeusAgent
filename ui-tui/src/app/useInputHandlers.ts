@@ -1,9 +1,10 @@
-import { forceRedraw, useInput } from '@zeus/ink'
 import { useStore } from '@nanostores/react'
+import { forceRedraw, useInput } from '@zeus/ink'
 import { useEffect, useRef } from 'react'
 
 import { DASHBOARD_TUI_MODE } from '../config/env.js'
 import { DOUBLE_ESC_MS, TYPING_IDLE_MS } from '../config/timing.js'
+import { expandTokens } from '../domain/attachments.js'
 import { applyCompletion } from '../domain/slash.js'
 import type {
   ApprovalRespondResponse,
@@ -187,6 +188,20 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
 
   const precisionWheelRef = useRef(initPrecisionWheel())
 
+  const discardInput = () => {
+    // Keep recalled text self-contained after paste/image token state is gone.
+    const draft = expandTokens(cRefs.tokensRef.current)([...cState.inputBuf, cState.input].join('\n'))
+
+    if (draft.trim()) {
+      cActions.pushHistory(draft)
+    }
+
+    // This is an explicit discard. Submission's clearIn must leave images
+    // attached until the already-dispatched message consumes them.
+    cActions.syncTokens('')
+    cActions.clearIn()
+  }
+
   useEffect(() => () => clearTimeout(scrollIdleTimer.current ?? undefined), [])
 
   const scrollTranscript = (delta: number) => {
@@ -363,7 +378,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   // Double-Esc discards the draft, matching Claude Code / Gemini CLI. It
   // sits above the isBlocked early-return so a prompt overlay cannot swallow
   // it. Ctrl+C now clears a non-empty composer even mid-stream; Esc Esc is
-  // still the dedicated discard (pushes the draft to history so Up recalls it).
+  // both preserve the full draft in history so Up recalls it.
   const lastEscRef = useRef(0)
 
   useInput((ch, key) => {
@@ -376,11 +391,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       lastEscRef.current = isDouble ? 0 : now
 
       if (isDouble && (cState.input || cState.inputBuf.length)) {
-        if (cState.input.trim()) {
-          cActions.pushHistory(cState.input)
-        }
-
-        cActions.clearIn()
+        discardInput()
 
         return
       }
@@ -643,7 +654,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       })
 
       if (ctrlC === 'clear') {
-        return cActions.clearIn()
+        return discardInput()
       }
 
       if (ctrlC === 'interrupt' && live.sid) {

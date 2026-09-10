@@ -33,6 +33,7 @@ def _server(tmp_path: Path, *, failed: bool = False):
         process = subprocess.Popen(
             [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), "-SelfTestUi", "-NoUi"],
             env=env,
+            cwd=tmp_path,
             stdout=output,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,

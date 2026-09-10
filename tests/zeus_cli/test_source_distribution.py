@@ -14,7 +14,9 @@ def test_source_updates_do_not_invoke_an_external_process(monkeypatch, capsys, c
     monkeypatch.setattr(banner.subprocess, "run", forbidden)
     assert banner.check_for_updates() is None
     assert distribution.handle_source_update(Namespace(check=check, plan=False)) == expected
-    assert "No ZeusAgent release channel" in capsys.readouterr().out
+    guidance = capsys.readouterr().out
+    assert "https://github.com/loteiron/ZeusAgent/releases" in guidance
+    assert "Automatic upstream replacement is disabled" in guidance
 
 
 def test_dashboard_source_update_is_refused_before_spawning(monkeypatch):

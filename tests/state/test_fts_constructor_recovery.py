@@ -42,6 +42,31 @@ def _schema(db):
     return [tuple(row) for row in db._conn.execute("SELECT name, rootpage, sql FROM sqlite_master WHERE type='table' ORDER BY name")]
 
 
+class _ConstructorFailureCursor:
+    """Reach the fallback even on SQLite versions that can DROP corrupt FTS.
+
+    The success test above uses the unmodified native engine. These failure
+    tests specifically exercise detachment: run the initial real DDL prefix,
+    then inject the constructor error at the damaged virtual-table DROP.
+    All fallback schema edits, authorizer failures and rollback stay real.
+    """
+
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self.failed = False
+
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+    def executescript(self, sql):
+        drop = "DROP TABLE IF EXISTS messages_fts;"
+        if not self.failed and drop in sql and "PRAGMA writable_schema=ON" not in sql:
+            self.failed = True
+            self.cursor.executescript(sql.split(drop, 1)[0])
+            raise sqlite3.DatabaseError("vtable constructor failed: messages_fts")
+        return self.cursor.executescript(sql)
+
+
 def test_constructor_recovery_preserves_canonical_rows_and_similarly_prefixed_table(corrupt):
     db = corrupt
     original = _canonical(db)
@@ -80,7 +105,7 @@ def test_fallback_failure_rolls_back_detachment_and_resets_writable_schema(corru
     db._conn.set_trace_callback(trace)
     db._conn.set_authorizer(authorize)
     try:
-        assert not db._recover_stale_fts(db._conn.cursor(), legacy=False, timeout_seconds=0)
+        assert not db._recover_stale_fts(_ConstructorFailureCursor(db._conn.cursor()), legacy=False, timeout_seconds=0)
     finally:
         db._conn.set_authorizer(None)
         db._conn.set_trace_callback(None)
@@ -114,7 +139,7 @@ def test_constructor_fallback_cannot_bypass_rebuild_ownership(corrupt, monkeypat
 def test_interrupted_schema_detachment_rolls_back_before_propagating(corrupt):
     db = corrupt
     before_schema, before_rows = _schema(db), _canonical(db)
-    cursor = db._conn.cursor()
+    cursor = _ConstructorFailureCursor(db._conn.cursor())
 
     class InterruptedCursor:
         def __getattr__(self, name):

@@ -181,14 +181,16 @@ def _detect_python_recipe(root: Path) -> Recipe | None:
 
     lower = f"{pyproject or ''}\n{requirements or ''}".lower()
     install = _PYTHON_INSTALL.get(detect_package_manager(root) or "") or (
-        "pip install -e ." if pyproject and not requirements else "pip install -r requirements.txt"
+        "pip install -r requirements.txt" if requirements is not None else "pip install -e ."
     )
-    pytest_or_empty = ["pytest"] if (root / "tests").exists() else []
+    pytest_or_empty = (["scripts/run_tests.sh"] if (root / "scripts/run_tests.sh").is_file()
+                       else ["pytest"] if (root / "tests").exists() else [])
 
     # Precedence: Django, then FastAPI/uvicorn, then Flask, then generic.
     if manage_py or "django" in lower:
         return Recipe(
-            name="Django app", kind="django", bootstrap=[install], test=["python manage.py test"],
+            name="Django app", kind="django", bootstrap=[install],
+            test=["scripts/run_tests.sh"] if (root / "scripts/run_tests.sh").is_file() else ["python manage.py test"],
             start="python manage.py runserver 0.0.0.0:8000", port=8000,
             evidence=["Detected manage.py" if manage_py else "Detected Django dependency"]
             + (["Detected pyproject.toml"] if pyproject else []),

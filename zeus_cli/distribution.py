@@ -1,7 +1,7 @@
 """Identity and distribution contract for the independent ZeusAgent source build."""
 
 PRODUCT_NAME = "ZeusAgent"
-FORK_REVISION = "zeus.1"
+FORK_REVISION = "zeus.0.22.0"
 UPSTREAM_PROJECT = "Hermes Agent"
 UPSTREAM_COMMIT = "2237be355906fbe6065ce1815711eee52b2d646e"
 UPSTREAM_URL = "https://github.com/NousResearch/hermes-agent"
@@ -10,9 +10,9 @@ REMOTE_RELEASES_AVAILABLE = False
 
 def source_update_message() -> str:
     return (
-        "ZeusAgent is an independent source build. No ZeusAgent release channel has been configured. "
-        "Install a reviewed ZeusAgent source package with: python scripts/setup_zeus.py. "
-        "Automatic upstream updates would replace this fork with Hermes Agent."
+        "Install the latest ZeusAgent setup or npm package from https://github.com/loteiron/ZeusAgent/releases. "
+        "Source checkouts can use: python scripts/setup_zeus.py. "
+        "Automatic upstream replacement is disabled."
     )
 
 

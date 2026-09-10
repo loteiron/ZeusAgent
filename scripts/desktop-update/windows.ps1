@@ -65,14 +65,21 @@ $ErrorActionPreference = "Continue"
 # and after the update we must hand focus TO the relaunched Desktop (a
 # WMI-spawned process starts unfocused). AllowSetForegroundWindow lets us
 # pass our foreground right on to the new ZeusAgent.exe pid.
-try {
-    Add-Type -Namespace ZeusAgentHandoff -Name Win32 -MemberDefinition @'
+$script:Win32 = $null
+function Initialize-ForegroundSupport {
+    # C# compilation can stall on a cold runner. Start the HTTP progress
+    # surface first; headless/browser-only runs never need these window APIs.
+    if ($null -ne $script:Win32) { return $script:Win32 }
+    try {
+        Add-Type -Namespace ZeusAgentHandoff -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
 '@ -ErrorAction Stop
-    $script:Win32 = $true
-} catch { $script:Win32 = $false }
+        $script:Win32 = $true
+    } catch { $script:Win32 = $false }
+    return $script:Win32
+}
 # Render UTF-8 glyphs (checkmarks, arrows) correctly in our own console echo
 # too; the legacy conhost default OEM codepage shows them as mojibake.
 try {
@@ -443,7 +450,7 @@ function Show-ProgressWindow {
         # window is decoration and competes with nothing (no TopMost).
         try {
             $form.Activate()
-            if ($script:Win32) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($form.Handle) | Out-Null }
+            if (Initialize-ForegroundSupport) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($form.Handle) | Out-Null }
         } catch {}
         [System.Windows.Forms.Application]::DoEvents()
         $script:Ui = [pscustomobject]@{ Form = $form; Bar = $bar; Title = $title; Sub = $sub; Timer = $null }
@@ -492,7 +499,7 @@ function Show-ErrorFinale([string]$Message) {
         $ui.Form.AcceptButton = $close
         try {
             $ui.Form.Activate()
-            if ($script:Win32) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($ui.Form.Handle) | Out-Null }
+            if (Initialize-ForegroundSupport) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($ui.Form.Handle) | Out-Null }
         } catch {}
         # Hold for dismissal so the failure is actually seen, but never park
         # forever -- the marker is already cleaned up and the relaunched
@@ -534,7 +541,7 @@ function Show-ManualFinale([string]$Message) {
         $ui.Form.AcceptButton = $close
         try {
             $ui.Form.Activate()
-            if ($script:Win32) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($ui.Form.Handle) | Out-Null }
+            if (Initialize-ForegroundSupport) { [ZeusAgentHandoff.Win32]::SetForegroundWindow($ui.Form.Handle) | Out-Null }
         } catch {}
         $deadline = (Get-Date).AddMinutes(5)
         while (-not $script:ErrorDismissed -and (Get-Date) -lt $deadline -and $ui.Form.Visible) {
@@ -640,7 +647,7 @@ function Start-DesktopRelaunch {
             # delegate that right. Poll briefly for the window: Electron
             # takes a couple seconds to create it.
             try {
-                if ($script:Win32) {
+                if (Initialize-ForegroundSupport) {
                     [ZeusAgentHandoff.Win32]::AllowSetForegroundWindow([int]$r.ProcessId) | Out-Null
                     $deadline = (Get-Date).AddSeconds(20)
                     while ((Get-Date) -lt $deadline) {
@@ -696,7 +703,7 @@ function Start-DesktopRelaunch {
                     # starts unfocused and only the current foreground owner
                     # (us) can delegate that right.
                     try {
-                        if ($script:Win32) {
+                        if (Initialize-ForegroundSupport) {
                             [ZeusAgentHandoff.Win32]::AllowSetForegroundWindow([int]$fresh[0].Id) | Out-Null
                             $focusDeadline = (Get-Date).AddSeconds(20)
                             while ((Get-Date) -lt $focusDeadline) {

@@ -1,4 +1,4 @@
-/** ZeusAgent currently ships as a reviewed source archive, without an upstream release channel. */
+/** The inherited automatic updater is disabled; Zeus packages have their own release assets. */
 export const REMOTE_RELEASES_AVAILABLE: boolean = false
 export const SOURCE_UPDATE_MESSAGE =
-  'ZeusAgent source build: install a reviewed ZeusAgent source package with python scripts/setup_zeus.py. Automatic Hermes releases are not ZeusAgent updates.'
+  'Install the latest ZeusAgent setup or npm package from https://github.com/loteiron/ZeusAgent/releases. Source checkouts can use python scripts/setup_zeus.py. Automatic upstream replacement is disabled.'

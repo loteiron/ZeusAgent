@@ -2184,6 +2184,20 @@ class CLICommandsMixin:
         _cp(f"  {format_dispatch_note(result, prompt)}")
 
     # ---- /goal, /loop, /subgoal -----------------------------------------------------------
+    def _handle_evidence_command(self, cmd: str) -> None:
+        """Inspect this console session's existing checks; never execute a recipe."""
+        parts = cmd.split(None, 1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if arg not in ("", "status"):
+            return _cp("Usage: /evidence [status]. This command only reads existing checks.")
+        from agent.verification_evidence import verification_status
+        from zeus_cli.verification_report_cmd import format_evidence_report
+        try:
+            report = verification_status(session_id=self.session_id, cwd=os.getcwd())
+            _cp(_escape(format_evidence_report(report)))
+        except (OSError, ValueError) as exc:
+            _cp(_escape(f"Verification evidence is unavailable: {exc}"))
+
     def _handle_goal_command(self, cmd: str) -> None:
         from zeus_cli.goal_command import dispatch_goal_command
         from zeus_cli.goals import last_user_message_content

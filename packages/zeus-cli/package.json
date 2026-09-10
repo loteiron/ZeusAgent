@@ -1,0 +1,15 @@
+{
+  "name": "@loteiron/zeus-agent",
+  "version": "0.22.0",
+  "description": "ZeusAgent for Windows: a coding agent in your terminal and messaging apps.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "zeus": "bin/zeus.mjs" },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "engines": { "node": ">=22" },
+  "files": ["bin/zeus.mjs", "lib/windows-runtime.mjs", "runtime-manifest.json"],
+  "repository": { "type": "git", "url": "git+https://github.com/loteiron/ZeusAgent.git" },
+  "homepage": "https://github.com/loteiron/ZeusAgent",
+  "bugs": { "url": "https://github.com/loteiron/ZeusAgent/issues" }
+}

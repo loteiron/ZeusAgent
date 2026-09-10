@@ -1456,7 +1456,24 @@ def _sum_clarify(name, args, content, content_len, line_count):
     # min_prune_chars guard and skips the >=200-char dedup.
     max_summary_chars = _PRUNE_MIN_CHARS - 1
     truncation_marker = "...[truncated]"
-    response = _json_dict(content).get("user_response")
+    parsed = _json_dict(content)
+    response = parsed.get("user_response")
+    # Batched clarify answers live under responses[]. Preserve real choices while
+    # excluding unanswered items independently, so one timeout cannot erase its peers.
+    if response is None and isinstance(parsed.get("responses"), list):
+        collected = []
+        for entry in parsed["responses"]:
+            if not isinstance(entry, dict):
+                continue
+            answer = entry.get("user_response")
+            if isinstance(answer, str):
+                answers = [answer]
+            elif isinstance(answer, list) and all(isinstance(item, str) for item in answer):
+                answers = answer
+            else:
+                continue
+            collected.extend(item for item in answers if item and not _is_clarify_non_response_sentinel(item))
+        response = collected or None
     is_answer_shaped = (isinstance(response, str) and bool(response)) or (
         isinstance(response, list) and bool(response) and all(isinstance(s, str) and s for s in response)
     )

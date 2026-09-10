@@ -7,7 +7,6 @@ import os from 'node:os'
 import path from 'node:path'
 import tls from 'node:tls'
 import { pathToFileURL } from 'node:url'
-import { REMOTE_RELEASES_AVAILABLE, SOURCE_UPDATE_MESSAGE } from './distribution'
 
 import {
   app,
@@ -49,7 +48,7 @@ import {
 import { dashboardFallbackArgs, sourceDeclaresServe } from './backend-command'
 import { createBackendConnectionState } from './backend-connection-state'
 import { BackendDialClaims } from './backend-dial-claim'
-import { buildDesktopBackendEnv, zeusManagedNodePathEntries, normalizeZeusAgentHomeRoot } from './backend-env'
+import { buildDesktopBackendEnv, normalizeZeusAgentHomeRoot, zeusManagedNodePathEntries } from './backend-env'
 import {
   isReauthRequiredError,
   makeNousCloudBackendDownError,
@@ -170,6 +169,7 @@ import {
   uninstallArgsForMode
 } from './desktop-uninstall'
 import { describeDevCdpDecision, resolveDevCdpPort } from './dev-cdp'
+import { REMOTE_RELEASES_AVAILABLE, SOURCE_UPDATE_MESSAGE } from './distribution'
 import { installEmbedReferer } from './embed-referer'
 import { createEventDeduper } from './event-dedupe'
 import {
@@ -273,6 +273,11 @@ import { runNativeLogin } from './native-oauth-login'
 import { loadNativeTokenSet, type NativeTokenStoreIo, persistNativeTokenSet } from './native-token-store'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import { LEGACY_OAUTH_PARTITION, resolveOauthPartition } from './oauth-partition'
+import {
+  buildPackagedWindowsBackend,
+  createPackagedWindowsRuntime,
+  packagedWindowsManifest
+} from './packaged-windows-runtime'
 import { createParentStartMarkerResolver, parentWatchdogEnv } from './parent-process-identity'
 import { registerPetOverlayIpc } from './pet-overlay-ipc'
 import {
@@ -433,12 +438,6 @@ import {
 } from './window-state'
 import { hiddenWindowsChildOptions } from './windows-child-options'
 import {
-  buildPathExtCandidates,
-  chooseUpdaterArgs,
-  getVenvSitePackagesEntries,
-  resolveVenvZeusAgentCommand
-} from './windows-zeus-path'
-import {
   connectWindowsRemote,
   detectRemotePlatform,
   helper,
@@ -461,6 +460,12 @@ import {
 } from './windows-sandbox-fallback'
 import { installWindowsSystemCaTrust } from './windows-system-ca'
 import { readWindowsUserEnvVar } from './windows-user-env'
+import {
+  buildPathExtCandidates,
+  chooseUpdaterArgs,
+  getVenvSitePackagesEntries,
+  resolveVenvZeusAgentCommand
+} from './windows-zeus-path'
 import { isPackagedInstallPath as isPackagedInstallPathUnderRoots } from './workspace-cwd'
 import { readWslWindowsClipboardImage } from './wsl-clipboard-image'
 import { resolvePickerDefaultPath, setActiveGatewayProfile, setWslBridgeProfileState } from './wsl-path-bridge'
@@ -830,6 +835,18 @@ function pathWithZeusAgentManagedNode(...entries) {
 // install.ps1 / install.sh use, so a desktop-only user and a CLI-only user end
 // up with identical layouts and can share one install.
 const ACTIVE_ZEUS_ROOT = path.join(ZEUS_HOME, 'zeus-agent')
+
+const BUNDLED_WINDOWS_MANIFEST = packagedWindowsManifest({
+  isPackaged: IS_PACKAGED,
+  platform: process.platform,
+  resourcesPath: process.resourcesPath
+})
+
+const bundledWindowsRuntime = BUNDLED_WINDOWS_MANIFEST
+  ? createPackagedWindowsRuntime({ manifestPath: BUNDLED_WINDOWS_MANIFEST })
+  : null
+
+let bundledRuntimeSetupPromise = null
 // VENV_ROOT — venv lives inside the repo, exactly like install.ps1 does it.
 const VENV_ROOT = path.join(ACTIVE_ZEUS_ROOT, 'venv')
 // BOOTSTRAP_COMPLETE_MARKER — written by the first-launch bootstrap runner
@@ -3142,8 +3159,15 @@ async function checkUpdates() {
   // This source fork has no signed release channel. Never advertise upstream
   // commits as ZeusAgent updates: applying them would replace this product.
   if (!REMOTE_RELEASES_AVAILABLE) {
-    return { supported: false, reason: 'source-fork', message: SOURCE_UPDATE_MESSAGE, behind: 0, updateAvailable: false }
+    return {
+      supported: false,
+      reason: 'source-fork',
+      message: SOURCE_UPDATE_MESSAGE,
+      behind: 0,
+      updateAvailable: false
+    }
   }
+
   const updateRoot = resolveUpdateRoot()
   let { branch } = readDesktopUpdateConfig()
   const gitDir = path.join(updateRoot, '.git')
@@ -5004,6 +5028,29 @@ function resolveZeusAgentBackend(backendArgs) {
     }
   }
 
+  // Packaged Windows owns an immutable release runtime. Resolve it before
+  // ACTIVE/PATH so an older install or our own zeus.cmd cannot win discovery.
+  if (bundledWindowsRuntime) {
+    const cached = !bootstrapRepairRequested && bundledWindowsRuntime.peek()
+
+    if (cached) {
+      return buildPackagedWindowsBackend(cached, backendArgs, ZEUS_HOME)
+    }
+
+    return {
+      kind: 'bootstrap-needed',
+      label: 'bundled ZeusAgent runtime',
+      command: null,
+      args: backendArgs,
+      bootstrap: true,
+      env: {},
+      shell: false,
+      bundledManifest: BUNDLED_WINDOWS_MANIFEST,
+      activeRoot: path.join(process.env.LOCALAPPDATA || os.homedir(), 'ZeusAgent', 'runtimes'),
+      platform: process.platform
+    }
+  }
+
   // 3. ACTIVE_ZEUS_ROOT — the canonical install at
   //    %LOCALAPPDATA%\\zeus\\zeus-agent (Windows) or ~/.zeus/zeus-agent.
   //    A valid bootstrap marker proves Desktop finished the first-run install
@@ -5163,6 +5210,43 @@ async function ensureRuntime(backend) {
     return backend
   }
 
+  if (backend.bundledManifest && bundledWindowsRuntime) {
+    if (bootstrapFailure) {
+      throw bootstrapFailure
+    }
+
+    if (!bundledRuntimeSetupPromise) {
+      if (bootstrapRepairRequested) {
+        bundledWindowsRuntime.reset()
+      }
+
+      bootstrapRepairRequested = false
+      bootstrapRepairAttempt = 0
+      bootstrapAbortController = new AbortController()
+      bundledRuntimeSetupPromise = bundledWindowsRuntime
+        .ensure({
+          signal: bootstrapAbortController.signal,
+          onEvent: event => {
+            rememberLog(`[bootstrap] ${JSON.stringify(event)}`)
+            broadcastBootstrapEvent(event)
+          }
+        })
+        .catch(error => {
+          bootstrapFailure = error
+          throw error
+        })
+        .finally(() => {
+          bootstrapAbortController = null
+          bundledRuntimeSetupPromise = null
+        })
+    }
+
+    const runtime = await bundledRuntimeSetupPromise
+    await advanceBootProgress('runtime.ready', 'ZeusAgent runtime is ready', 82)
+
+    return buildPackagedWindowsBackend(runtime, backend.args, ZEUS_HOME)
+  }
+
   // backend.kind === 'bootstrap-needed' means resolveZeusAgentBackend couldn't
   // find anything to spawn. Hand off to the bootstrap runner which drives the
   // platform installer, writes the bootstrap-complete marker on success, then
@@ -5308,7 +5392,8 @@ async function ensureRuntime(backend) {
     // If we hit this, the user (or a deleted venv) broke the invariant; tell
     // them to re-run the install.
     throw new Error(
-      `ZeusAgent venv missing at ${VENV_ROOT}. Re-run the desktop installer or ` + '`scripts/install.ps1` to rebuild it.'
+      `ZeusAgent venv missing at ${VENV_ROOT}. Re-run the desktop installer or ` +
+        '`scripts/install.ps1` to rebuild it.'
     )
   }
 
@@ -13001,7 +13086,23 @@ async function startZeusAgent() {
       prepareLocalBackend: async () => {
         await advanceBootProgress('backend.runtime', 'Resolving ZeusAgent runtime', 28)
 
-        return resolveZeusAgentBackend(backendArgs)
+        const backend = resolveZeusAgentBackend(backendArgs)
+
+        if ('bundledManifest' in backend && bundledWindowsRuntime && !bootstrapRepairRequested) {
+          try {
+            // Read-only ready marker validation precedes the local/remote gate;
+            // only the user's local choice is allowed to start installation.
+            const runtime = await bundledWindowsRuntime.readCached()
+
+            if (runtime) {
+              return buildPackagedWindowsBackend(runtime, backendArgs, ZEUS_HOME)
+            }
+          } catch (error) {
+            rememberLog(`[bootstrap] bundled runtime is not ready: ${error.message}`)
+          }
+        }
+
+        return backend
       },
       resolveRemote: () => {
         // Classify immediately before each throwing resolve. This callback runs
@@ -15082,10 +15183,7 @@ ipcMain.handle('zeus:window:openInTerminal', async (_event, sessionId, opts) => 
     const scriptDir = path.join(app.getPath('userData'), 'open-in-terminal')
     fs.mkdirSync(scriptDir, { recursive: true })
 
-    const scriptPath = path.join(
-      scriptDir,
-      `zeus-${crypto.randomBytes(6).toString('hex')}${terminalScriptExtension()}`
-    )
+    const scriptPath = path.join(scriptDir, `zeus-${crypto.randomBytes(6).toString('hex')}${terminalScriptExtension()}`)
 
     fs.writeFileSync(
       scriptPath,
@@ -15186,6 +15284,7 @@ ipcMain.handle('zeus:bootstrap:reset', async () => {
   rememberLog('[bootstrap] reset requested by renderer; clearing latched failure')
   await teardownPrimaryBackendAndWait()
   bootstrapFailure = null
+  bundledWindowsRuntime?.reset()
   backendStartFailure = null
   remoteReauthFailure = null
   getFirstRunSetupGate().resetForRetry()
@@ -15238,6 +15337,7 @@ ipcMain.handle('zeus:bootstrap:repair', async () => {
   // breaks the infinite reinstall loop the user hit.
   bootstrapRepairRequested = repairDecision.hardReinstall
   bootstrapFailure = null
+  bundledWindowsRuntime?.reset()
   backendStartFailure = null
   remoteReauthFailure = null
   getFirstRunSetupGate().resetForRepair()
@@ -16153,6 +16253,7 @@ ipcMain.handle('zeus:connection-config:apply', async (_event, payload) => {
               // A remote connection bypasses local runtime/bootstrap failures. Clear
               // the local-install latch so unsupported/failure escape paths can re-home.
               bootstrapFailure = null
+              bundledWindowsRuntime?.reset()
             },
             mode: config.mode,
             notifyConnectionApplied: sendConnectionApplied,

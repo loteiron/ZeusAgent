@@ -21,7 +21,7 @@ import {
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
 import { UninstallSection } from './uninstall-section'
 
-const RELEASE_NOTES_URL = 'https://github.com/NousResearch/hermes-agent/releases'
+const RELEASE_NOTES_URL = 'https://github.com/loteiron/ZeusAgent/releases'
 
 function relativeTime(ms: number | undefined, a: Translations['settings']['about']) {
   if (!ms) {
@@ -204,7 +204,7 @@ export function AboutSettings() {
                 target="_blank"
               >
                 <ExternalLink className="size-3" />
-                Upstream Hermes release notes
+                ZeusAgent release notes
               </a>
             </Button>
           </div>

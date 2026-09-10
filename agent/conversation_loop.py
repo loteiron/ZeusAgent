@@ -116,7 +116,7 @@ def _review_input_budget_exhausted(agent: Any) -> bool:
 def _maybe_inject_run_budget_wrapup(agent: Any, messages: List[Dict[str, Any]]) -> bool:
     """Inject the one-time wall-clock wrap-up notice when past 80% of budget.
 
-    Appends to the NEWEST ``role:"tool"`` message (cache-safe, like /steer); latches
+    Appends to the newest unpersisted ``role:"tool"`` message; latches
     ``_run_budget_wrapup_injected`` only on a successful append."""
     budget = getattr(agent, "run_budget_seconds", None)
     started = getattr(agent, "_run_budget_started_at", None)
@@ -124,8 +124,13 @@ def _maybe_inject_run_budget_wrapup(agent: Any, messages: List[Dict[str, Any]]) 
         (time.time() - started) < 0.8 * float(budget)
     ):
         return False
+    from agent.context_compressor import _DB_PERSISTED_MARKER
     for msg in reversed(messages):
         if isinstance(msg, dict) and msg.get("role") == "tool":
+            # A checkpoint is also a cache boundary: its live text must remain
+            # byte-identical to the append-only transcript used after restart.
+            if msg.get(_DB_PERSISTED_MARKER):
+                return False
             existing = msg.get("content", "")
             if isinstance(existing, str):
                 msg["content"] = existing + f"\n\n{RUN_BUDGET_WRAPUP_NOTICE}"
@@ -1284,6 +1289,7 @@ class _LoopState:
     failed: bool = False
     codex_ack_continuations: int = 0
     length_continue_retries: int = 0
+    restart_count: int = 0  # refunded redirect/fallback attempts, bounded across the whole turn
     _outer_error_count: int = 0  # outer-loop exceptions this turn (#92450), see _MAX_OUTER_LOOP_ERRORS
     truncated_tool_call_retries: int = 0
     truncated_response_parts: List[str] = field(default_factory=list)

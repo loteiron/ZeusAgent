@@ -3248,6 +3248,25 @@ class _StreamingCall(StreamingWaitMonitor):
         error = self.result["error"]
         _partial_text = (getattr(self.agent, "_current_streamed_assistant_text", "") or "").strip() or None
         _partial_names = list(self.result.get("partial_tool_names") or [])
+        classified = None
+        with contextlib.suppress(Exception):
+            from agent.error_classifier import classify_api_error
+            classified = classify_api_error(
+                error, provider=str(getattr(self.agent, "provider", "") or ""),
+                model=str(getattr(self.agent, "model", "") or ""),
+            )
+        # Partial delivery means the exception will not reach ordinary overflow
+        # recovery. Do not turn a known context rejection into a larger request.
+        # A 413 payload-size failure keeps its existing, separate recovery owner.
+        if classified is not None and classified.reason == FailoverReason.context_overflow:
+            logger.warning("Partial stream ended on context overflow; not requesting continuation: %s", error)
+            stub = _build_partial_stream_stub(
+                "assistant", _partial_text, None, getattr(self.agent, "model", "unknown"), None,
+                dropped_tool_names=_partial_names,
+            )
+            stub._overflow_terminal = True
+            _reset_stale_streak(self.agent)
+            return stub
         if _partial_names:
             # User-visible warning so the user and model both know what was attempted.
             _name_str = ", ".join(_partial_names[:3])
@@ -3269,12 +3288,8 @@ class _StreamingCall(StreamingWaitMonitor):
         # before the error is swallowed into the stub: the loop reads the tag and falls back.
         _stub = _build_partial_stream_stub("assistant", _partial_text, None,
             getattr(self.agent, "model", "unknown"), None, dropped_tool_names=_partial_names)
-        with contextlib.suppress(Exception):
-            from agent.error_classifier import classify_api_error
-            _cls = classify_api_error(
-                error, provider=str(getattr(self.agent, "provider", "") or ""), model=str(getattr(self.agent, "model", "") or ""))
-            if _cls.reason == FailoverReason.content_policy_blocked:
-                _stub._content_filter_terminated = True
+        if classified is not None and classified.reason == FailoverReason.content_policy_blocked:
+            _stub._content_filter_terminated = True
         _reset_stale_streak(self.agent)  # deltas fired => provider responsive: clear the breaker
         return _stub
 

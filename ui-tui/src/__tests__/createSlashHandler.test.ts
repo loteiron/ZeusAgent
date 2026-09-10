@@ -33,6 +33,143 @@ describe('createSlashHandler', () => {
     envState.dashboardTuiMode = false
   })
 
+  it('shows all session evidence without masking a failed check with a later pass', async () => {
+    patchUiState({ sid: 'evidence-session' })
+    const ctx = buildCtx()
+    ctx.gateway.rpc.mockResolvedValue({
+      verification: {
+        status: 'failed',
+        session_id: 'durable-session',
+        root: '/project',
+        summary: { total: 2, passed: 1, failed: 1, stale: 0, unknown: 0 },
+        workspace: { root: '/project', changed_paths: ['src/app.ts'], reason: '' },
+        baseline: null,
+        checks: [
+          {
+            command: 'pytest tests/unit',
+            status: 'failed',
+            freshness: 'current',
+            comparison: 'regression',
+            scope: 'targeted',
+            exit_code: 1,
+            created_at: '2026-09-10T00:00:00Z',
+            cwd: '/project',
+            output_summary: 'assertion failed'
+          },
+          {
+            command: 'npm run lint',
+            status: 'passed',
+            freshness: 'current',
+            comparison: 'fixed',
+            scope: 'full',
+            exit_code: 0,
+            created_at: '2026-09-10T00:01:00Z',
+            cwd: '/project',
+            output_summary: 'lint passed'
+          }
+        ]
+      }
+    })
+    expect(createSlashHandler(ctx)('/evidence')).toBe(true)
+    await vi.waitFor(() => expect(ctx.transcript.page).toHaveBeenCalled())
+    expect(ctx.gateway.rpc).toHaveBeenCalledWith('verification.status', { session_id: 'evidence-session' })
+    const text = ctx.transcript.page.mock.calls[0]?.[0]
+    expect(text).toContain('Verification: failed')
+    expect(text).toContain('FAILED | current | regression | targeted')
+    expect(text).toContain('PASSED | current | fixed | full')
+    expect(text).toContain('assertion failed')
+    expect(text).toContain('src/app.ts')
+    expect(ctx.gateway.gw.request).not.toHaveBeenCalled()
+    expect(ctx.transcript.send).not.toHaveBeenCalled()
+  })
+
+  it('drops a delayed evidence report after the active session changes', async () => {
+    patchUiState({ sid: 'old-session' })
+    const ctx = buildCtx()
+    let finish!: (value: object) => void
+    ctx.gateway.rpc.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    createSlashHandler(ctx)('/evidence')
+    patchUiState({ sid: 'new-session' })
+    finish({ verification: { status: 'passed', checks: [] } })
+    await Promise.resolve()
+    expect(ctx.transcript.page).not.toHaveBeenCalled()
+  })
+
+  it('keeps a newer stale evidence response over an older passing response', async () => {
+    patchUiState({ sid: 'evidence-session' })
+    const ctx = buildCtx()
+    const pending: Array<(value: object) => void> = []
+    ctx.gateway.rpc.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          pending.push(resolve)
+        })
+    )
+    const handler = createSlashHandler(ctx)
+    handler('/evidence')
+    handler('/evidence status')
+    pending[1]?.({
+      verification: {
+        status: 'stale',
+        session_id: 'evidence-session',
+        root: '/project',
+        workspace: { root: '/project', reason: 'Source changed after the check.', changed_paths: ['app.py'] },
+        baseline: { created_at: '2026-09-09', check_count: 1 },
+        checks: [
+          {
+            command: 'pytest',
+            status: 'passed',
+            freshness: 'stale',
+            comparison: 'incomparable',
+            scope: 'full',
+            exit_code: 0,
+            created_at: '2026-09-10',
+            cwd: '/project',
+            output_summary: 'old success'
+          }
+        ]
+      }
+    })
+    await vi.waitFor(() => expect(ctx.transcript.page).toHaveBeenCalledOnce())
+    pending[0]?.({ verification: { status: 'passed', checks: [] } })
+    await Promise.resolve()
+    expect(ctx.transcript.page).toHaveBeenCalledOnce()
+    const text = ctx.transcript.page.mock.calls[0]?.[0]
+    expect(text).toContain('Verification: stale')
+    expect(text).toContain('PASSED | stale | incomparable')
+    expect(text).toContain('Baseline: 2026-09-09')
+  })
+
+  it('shows evidence transport errors without auto-retrying or running a command', async () => {
+    patchUiState({ sid: 'evidence-session' })
+    const ctx = buildCtx()
+    ctx.gateway.rpc.mockRejectedValue(new Error('inspection timed out'))
+    createSlashHandler(ctx)('/evidence')
+    await vi.waitFor(() => expect(ctx.transcript.sys).toHaveBeenCalledWith('error: inspection timed out'))
+    expect(ctx.gateway.rpc).toHaveBeenCalledOnce()
+    expect(ctx.gateway.gw.request).not.toHaveBeenCalled()
+    expect(ctx.transcript.send).not.toHaveBeenCalled()
+  })
+
+  it('requires a session and refuses executable evidence arguments', () => {
+    const ctx = buildCtx()
+    createSlashHandler(ctx)('/evidence')
+    expect(ctx.transcript.sys).toHaveBeenCalledWith(
+      'No active session. Choose a workspace session before inspecting evidence.'
+    )
+    patchUiState({ sid: 'evidence-session' })
+    createSlashHandler(ctx)('/evidence pytest')
+    expect(ctx.transcript.sys).toHaveBeenCalledWith(
+      'Usage: /evidence [status]. This command only reads existing checks.'
+    )
+    expect(ctx.gateway.rpc).not.toHaveBeenCalled()
+  })
+
   it('opens the unified sessions overlay for /resume', () => {
     const ctx = buildCtx()
 

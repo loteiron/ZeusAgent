@@ -44,6 +44,8 @@ and setup experience, with coordinated light and dark appearances.
 Use `/zeus-engineering <task>` for a workflow that establishes a baseline,
 implements the change, challenges failure cases, and reports the observed
 results. In Desktop, open **Evidence** beside the coding workspace controls.
+In a CLI or terminal UI conversation, use `/evidence` to inspect the same
+session's recorded results, freshness, output, and baseline comparisons.
 
 ```sh
 zeus verify --detect-only --json
@@ -68,6 +70,10 @@ to another bot are ignored. Conversation text and filesystem paths stay text.
 Status buttons are bound to the requesting user, chat, topic, and current
 session. An expired panel or a panel from before `/new` cannot control a new session.
 
+In the terminal UI, Ctrl+C or double-Esc preserves a discarded draft for Up-arrow
+recall, including multiline and pasted text. Discarded image attachments are
+detached. Ctrl+C interrupts an active turn; from an empty idle composer it exits.
+
 ## Move from Hermes
 
 Open **Settings → Move from Hermes**, select the destination Zeus profile, and
@@ -88,10 +94,52 @@ references and may need their original files. Named profiles are imported from
 the default Zeus profile. If Hermes changes during a scan or import, close it
 and scan again.
 
-## Get started
+## Install on Windows
 
-This is a **development source distribution**. Download or clone the complete
-repository, then run the following commands from its root directory.
+Download [setup.exe](https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/setup.exe)
+for Windows x64. The per-user installer adds Desktop shortcuts and the `zeus`
+command to your user PATH. Open a **new** CMD or PowerShell window after installation:
+
+```sh
+zeus setup
+zeus
+zeus --desktop
+```
+
+Run `zeus` from any project directory; that directory remains the agent's working
+directory. The installer includes the reviewed Zeus source, prebuilt interfaces,
+and checksum-pinned portable Git Bash, Node.js, ripgrep, and uv. First launch
+downloads Python 3.12.12 and the locked Python dependencies into an isolated,
+versioned runtime. Existing Python and Node installations are not required.
+Internet access is required for this first setup and for hosted model providers.
+
+The Windows installer is currently unsigned. Its SHA-256 checksum is published
+with the [release assets](https://github.com/loteiron/ZeusAgent/releases/tag/v0.22.0).
+
+### Install the command with npm
+
+With Node.js 22.22 or later, install the same release directly from GitHub:
+
+```sh
+npm install --global https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/loteiron-zeus-agent-0.22.0.tgz
+zeus setup
+zeus
+```
+
+The npm package is a Windows x64 launcher. Its first run downloads and verifies
+the matching runtime and tools. `zeus --desktop` opens the Desktop installation
+when `setup.exe` is installed. The command preserves arguments and the caller's
+directory in CMD and PowerShell. This installation URL does not require an npm
+registry account or a separately published registry package.
+
+Install a newer release through its setup or npm asset. Packaged runtimes refuse
+in-place source updates; configuration and conversations remain in your Zeus
+home directory. Uninstalling Desktop removes its own PATH entry and keeps user data.
+
+## Run from source
+
+Download or clone the complete repository, then run the following commands from
+its root directory. Source installation also supports Linux and macOS.
 
 ### Requirements
 
@@ -136,6 +184,19 @@ The Python CLI can also be installed with `python scripts/setup_zeus.py` without
 building the interfaces. Configure messaging credentials and authorized users
 before starting a gateway.
 
+## Local or custom model endpoints
+
+Start an OpenAI-compatible model server and load a model before connecting.
+In Desktop, open **Settings → Providers → API Keys → Local / custom endpoint**.
+Enter the server's API base URL, such as `http://127.0.0.1:8000/v1`, and an API key
+only if that server requires one. Select **Connect**.
+
+ZeusAgent checks the endpoint, discovers its advertised models at `/v1/models`,
+and saves the first available model with the URL and optional key. If the server
+advertises no models, load one in the server and try again. The server must be
+reachable from the machine running the ZeusAgent backend; with a remote backend,
+`127.0.0.1` refers to that remote machine.
+
 ## Development
 
 Use `python scripts/launch_zeus.py --desktop-dev` for desktop live reload.
@@ -162,9 +223,11 @@ and namespace, isolated ZeusAgent state, source setup and launch tools, and
 changes to command routing, retry handling, and Windows behavior. Core agent
 capabilities build on Hermes.
 
-This repository currently provides source builds, without signed installers or
-a configured ZeusAgent release/update service. Migration is an explicit action
-in Settings; importing history does not reconnect accounts or resume old jobs.
+Windows releases provide an unsigned setup executable and an npm launcher asset;
+Linux and macOS use source installation. Install updates from ZeusAgent's release
+assets. Automatic upstream replacement is disabled for packaged runtimes.
+Migration is an explicit action in Settings; importing history does not reconnect
+accounts or resume old jobs.
 
 The original **MIT license** and copyright notice are preserved in
 [LICENSE](LICENSE); fork provenance and attribution are recorded in
