@@ -62,7 +62,7 @@ jobs:
           bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0
           tests/scripts/test_footgun_subprocess_encoding.py tests/scripts/test_windows_footguns_full_repo_scan.py
           tests/ci/test_stage_windows_release.py tests/ci/test_stage_linux_release.py tests/ci/test_zeus_workflow.py
-          tests/test_verify_http_readiness.py tests/verify/test_runner_process_group_cleanup.py
+          tests/test_verify_http_readiness.py tests/verify/test_runner_process_group_cleanup.py tests/verify/test_process_cleanup_trace.py
           tests/gateway/test_kanban_wake_acceptance.py tests/zeus_cli/test_hermes_import_titles.py -- --tb=short -ra
       - name: Run isolated Python tests without retries
         run: |

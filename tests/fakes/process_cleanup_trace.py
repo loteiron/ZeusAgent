@@ -26,7 +26,7 @@ class ProcessCleanupTrace:
             return
         self.terminate, self.signal = runner._terminate_process_group, os.killpg
         monkeypatch.setattr(os, "getpgid", self.observe_group)
-        monkeypatch.setattr(psutil.Process, "status", self.observe_status)
+        monkeypatch.setattr(psutil.Process, "status", lambda process: self.observe_status(process))
         monkeypatch.setattr(psutil, "pids", self.observe_pids)
         monkeypatch.setattr(os, "killpg", self.observe_signal)
         monkeypatch.setattr(runner, "_terminate_process_group", self.observe_terminate)
@@ -43,9 +43,12 @@ class ProcessCleanupTrace:
             row = {"pid": pid, "listed": pid in listed}
             try:
                 row["pgid"] = self.getpgid(pid)
+            except OSError as exc:
+                row["group_error"] = repr(exc)
+            try:
                 row["status"] = self.status(psutil.Process(pid))
-            except (OSError, psutil.Error) as exc:
-                row["error"] = repr(exc)
+            except psutil.Error as exc:
+                row["status_error"] = repr(exc)
             rows.append(row)
         self.record(label, members=rows)
 
