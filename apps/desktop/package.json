@@ -304,14 +304,55 @@
       "signAndEditExecutable": false
     },
     "linux": {
+      "extraResources": [
+        {
+          "from": "build/backend-linux",
+          "to": "backend"
+        },
+        {
+          "from": "installer/linux/zeus",
+          "to": "cli/zeus"
+        }
+      ],
       "category": "Development",
       "maintainer": "ZeusAgent contributors",
       "synopsis": "Native desktop shell for ZeusAgent.",
       "target": [
-        "AppImage",
-        "deb",
-        "rpm"
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
+    },
+    "deb": {
+      "packageName": "zeus-agent",
+      "afterInstall": "installer/linux/after-install.sh",
+      "afterRemove": "installer/linux/after-remove.sh",
+      "fpm": [
+        "release/linux-unpacked/resources/cli/zeus=/usr/bin/zeus"
+      ],
+      "depends": [
+        "ca-certificates",
+        "git",
+        "ripgrep",
+        "libgtk-3-0 | libgtk-3-0t64",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0 | libatspi2.0-0t64",
+        "libuuid1",
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2 | libasound2t64",
+        "libx11-xcb1",
+        "libxkbcommon0",
+        "libdrm2"
+      ],
+      "recommends": []
     },
     "nsis": {
       "include": "installer/installer.nsh",

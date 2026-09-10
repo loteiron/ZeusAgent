@@ -130,7 +130,7 @@ jobs:
           tests/agent/test_workspace_identity.py tests/agent/test_verification_revision.py
           tests/agent/test_upstream_recovery_contracts.py tests/agent/test_verification_recipe_boundaries.py
           tests/agent/test_upstream_clarify_pruning.py tests/run_agent/test_upstream_loop_bounds.py
-          tests/test_verify_http_readiness.py tests/ci/test_stage_windows_release.py
+          tests/test_verify_http_readiness.py tests/ci/test_stage_windows_release.py tests/ci/test_stage_linux_release.py
           tests/zeus_cli/test_windows_release_update.py tests/zeus_cli/test_evidence_slash.py
           tests/cli/test_quick_commands.py tests/cli/test_cli_status_bar_goal.py
           tests/agent/test_verification_stop.py tests/tools/test_process_verification_completion_lock.py

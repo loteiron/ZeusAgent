@@ -8,6 +8,8 @@ and exits 2 on CLI surfaces.
 from __future__ import annotations
 
 import logging
+import json
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -42,24 +44,42 @@ def evaluate_update_admission(project_root: Path) -> Optional[UpdateRefusal]:
     ``None`` means the install is eligible for in-place update (git checkout or unknown-but-
     mutable). Never raises; on any internal error it falls back to the heuristic layer only.
     """
-    # Versioned Windows release runtimes are immutable. Marker presence is the
+    # Versioned release runtimes are immutable. Marker presence is the
     # boundary, including malformed/unreadable markers: damage must never admit
     # this directory into the source updater or its upstream ZIP fallback.
     marker = Path(project_root) / ".zeus-runtime.json"
+    manager = "zeus-packaged-release"
+    metadata = None
     try:
-        marker.lstat()
+        metadata = marker.lstat()
         packaged = True
     except FileNotFoundError:
         packaged = False
     except OSError:
         packaged = True
     if packaged:
+        # Read only a small regular marker to improve the repair instructions.
+        # Its content can never grant mutation permission, even if it claims git.
+        try:
+            if metadata is not None and stat.S_ISREG(metadata.st_mode) and metadata.st_size <= 4096:
+                with marker.open("rb") as stream:
+                    document = json.loads(stream.read(4097))
+                if isinstance(document, dict) and document.get("schemaVersion") == 1:
+                    candidate = document.get("manager")
+                    if candidate in {"zeus-windows-release", "zeus-linux-release"}:
+                        manager = candidate
+        except (OSError, ValueError):
+            pass
+        platform = {"zeus-windows-release": "Windows", "zeus-linux-release": "Linux"}.get(manager)
+        package = "a newer ZeusAgent .deb, terminal installer, or npm package" if platform == "Linux" else (
+            "a newer ZeusAgent setup or npm package" if platform == "Windows" else "the appropriate ZeusAgent package again"
+        )
         releases = "https://github.com/loteiron/ZeusAgent/releases/latest"
         return UpdateRefusal(
-            code="zeus-windows-release",
+            code=manager,
             message=(
-                "This ZeusAgent runtime is managed by the Windows release package.\n"
-                "Install a newer ZeusAgent setup or npm package from the release page:\n"
+                f"This ZeusAgent runtime is managed by {'the ' + platform + ' ' if platform else 'a '}release package.\n"
+                f"Install {package} from the release page:\n"
                 f"  {releases}\n"
                 "Your Zeus settings and conversations are retained."
             ),

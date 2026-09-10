@@ -6,6 +6,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 
 import pytest
 
@@ -15,12 +16,16 @@ from tests.fakes import loopback_http_server
 
 
 @contextlib.contextmanager
-def _server(statuses=(200,), *, delay=0):
+def _server(statuses=(200,), *, delay=0, startup_delay=0):
     received = []
     stop = threading.Event()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path == "/__fixture_ready":
+                self.send_response(200)
+                self.end_headers()
+                return
             index = len(received)
             received.append(self.path)
             stop.wait(delay)
@@ -33,9 +38,18 @@ def _server(statuses=(200,), *, delay=0):
             pass
 
     server = loopback_http_server.LoopbackHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    def serve():
+        stop.wait(startup_delay)
+        server.serve_forever(poll_interval=0.01)
+
+    thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     try:
+        # Finish actual socket/thread startup before measuring a deliberately
+        # short request budget. This probe never consumes the tested sequence.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{server.server_port}/__fixture_ready", timeout=5) as response:
+            assert response.status == 200
         yield f"http://127.0.0.1:{server.server_port}/health", received
     finally:
         stop.set()
@@ -48,6 +62,14 @@ def test_readiness_waits_through_warmup_until_healthy_response():
     with _server((503, 503, 200)) as (url, received):
         assert _poll_readiness(url, 1, interval=0.01) == (True, 200, None)
         assert len(received) == 3
+
+
+def test_fixture_finishes_startup_before_measuring_a_short_readiness_budget():
+    with _server((503,), startup_delay=0.3) as (url, received):
+        ready, code, _error = _poll_readiness(url, 0.12, interval=0.01)
+        assert not ready
+        assert code == 503
+        assert received
 
 
 @pytest.mark.parametrize("status", [404, 500, 503])

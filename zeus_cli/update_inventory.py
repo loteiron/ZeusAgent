@@ -153,7 +153,7 @@ def _collect_install_shape(plan: UpdatePlan) -> None:
         if refusal is not None:
             plan.updatable_in_place = False
             plan.update_mechanism = refusal.update_command
-            if refusal.code == "zeus-windows-release":
+            if refusal.code in {"zeus-windows-release", "zeus-linux-release", "zeus-packaged-release"}:
                 plan.install_method = refusal.code
 
 

@@ -91,14 +91,15 @@ class TestBangContextGating:
 class TestBangExecution:
     def test_output_is_streamed_to_writer(self):
         lines = []
-        code = run_bang_command("echo bang-one; echo bang-two", writer=lines.append)
+        command = "echo bang-one&echo bang-two" if os.name == "nt" else "echo bang-one; echo bang-two"
+        code = run_bang_command(command, writer=lines.append)
         assert code == 0
         assert "bang-one" in lines
         assert "bang-two" in lines
 
     def test_stderr_is_merged_into_output(self):
         lines = []
-        run_bang_command("echo to-stderr >&2", writer=lines.append)
+        run_bang_command("echo to-stderr>&2", writer=lines.append)
         assert "to-stderr" in lines
 
     def test_nonzero_exit_code_is_returned(self):
@@ -108,7 +109,8 @@ class TestBangExecution:
 
     def test_runs_in_requested_cwd(self, tmp_path):
         lines = []
-        code = run_bang_command("pwd", cwd=str(tmp_path), writer=lines.append)
+        command = "cd" if os.name == "nt" else "pwd"
+        code = run_bang_command(command, cwd=str(tmp_path), writer=lines.append)
         assert code == 0
         # macOS resolves /tmp through /private, so compare realpaths.
         assert os.path.realpath(lines[-1].strip()) == os.path.realpath(str(tmp_path))
@@ -308,6 +310,5 @@ class TestBangLeavesHistoryByteIdentical:
         assert json.dumps(cli.conversation_history, sort_keys=True) == before
         roles = [m["role"] for m in cli.conversation_history]
         assert roles == ["system", "user", "assistant", "user", "assistant", "tool"]
-
 
 

@@ -2,24 +2,12 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { buildDesktopBackendEnv } from './backend-env'
+import { createPackagedRuntime, type PackagedRuntime as Runtime, type RuntimeOptions } from './packaged-runtime'
 
-type Runtime = {
-  root: string
-  python: string
-  venvRoot: string
-  version: string
-  commit: string
-  env: NodeJS.ProcessEnv
-}
-
-type Progress = { stage: string; message: string }
-type RuntimeOptions = { manifestPath: string; signal?: AbortSignal; onProgress?: (event: Progress) => void }
 type RuntimeModule = {
   readCachedWindowsRuntime: (options: { manifestPath: string }) => Promise<Runtime | null>
   ensureWindowsRuntime: (options: RuntimeOptions) => Promise<Runtime>
 }
-type BootstrapEvent = Record<string, unknown>
-const INSTALL_STAGES = ['runtime-files', 'python', 'dependencies', 'verify']
 
 export function packagedWindowsManifest({
   isPackaged,
@@ -41,7 +29,6 @@ async function loadRuntimeModule(manifestPath: string): Promise<RuntimeModule> {
   return await import(/* @vite-ignore */ url)
 }
 
-/** The release helper owns installation; Electron owns its observable lifecycle. */
 export function createPackagedWindowsRuntime({
   manifestPath,
   loadModule = loadRuntimeModule
@@ -49,111 +36,14 @@ export function createPackagedWindowsRuntime({
   manifestPath: string
   loadModule?: (manifestPath: string) => Promise<RuntimeModule>
 }) {
-  let cached: Runtime | null = null
-  let pending: Promise<Runtime> | null = null
-  let failure: Error | null = null
+  return createPackagedRuntime({
+    manifestPath,
+    loadModule: async file => {
+      const module = await loadModule(file)
 
-  return {
-    peek: () => cached,
-    reset() {
-      cached = null
-      failure = null
-    },
-    async readCached() {
-      if (!cached) {
-        cached = await (await loadModule(manifestPath)).readCachedWindowsRuntime({ manifestPath })
-      }
-
-      return cached
-    },
-    async ensure({
-      signal,
-      onEvent = () => {}
-    }: {
-      signal?: AbortSignal
-      onEvent?: (event: BootstrapEvent) => void
-    } = {}): Promise<Runtime> {
-      if (failure) {
-        throw failure
-      }
-
-      if (cached) {
-        return cached
-      }
-
-      if (pending) {
-        return await pending
-      }
-
-      pending = (async () => {
-        let stage: string | null = null
-        onEvent({ type: 'manifest', stages: INSTALL_STAGES.map(name => ({ name })), protocolVersion: null })
-
-        try {
-          const module = await loadModule(manifestPath)
-
-          const runtime = await module.ensureWindowsRuntime({
-            manifestPath,
-            signal,
-            onProgress: progress => {
-              const nextStage = ['waiting', 'download', 'extract'].includes(progress.stage)
-                ? 'runtime-files'
-                : progress.stage === 'ready'
-                  ? 'verify'
-                  : progress.stage
-
-              if (stage !== nextStage) {
-                if (stage) {
-                  onEvent({ type: 'stage', name: stage, state: 'succeeded' })
-                }
-
-                stage = nextStage
-                onEvent({ type: 'stage', name: stage, state: 'running' })
-              }
-
-              onEvent({ type: 'log', stage, line: progress.message, stream: 'stdout' })
-            }
-          })
-
-          signal?.throwIfAborted()
-          cached = runtime
-
-          if (stage) {
-            onEvent({ type: 'stage', name: stage, state: 'succeeded' })
-          }
-
-          onEvent({ type: 'complete' })
-
-          return runtime
-        } catch (cause) {
-          const cancelled = Boolean(signal?.aborted)
-
-          const message = cancelled
-            ? 'ZeusAgent install was cancelled.'
-            : `ZeusAgent runtime setup failed: ${cause instanceof Error ? cause.message : String(cause)}`
-
-          failure = Object.assign(new Error(message, { cause }), {
-            isBootstrapFailure: true,
-            bootstrapCancelled: cancelled,
-            failedStage: stage
-          })
-
-          if (stage) {
-            onEvent({ type: 'stage', name: stage, state: 'failed', error: message })
-          }
-
-          onEvent({ type: 'failed', error: message })
-          throw failure
-        }
-      })()
-
-      try {
-        return await pending
-      } finally {
-        pending = null
-      }
+      return { readCachedRuntime: module.readCachedWindowsRuntime, ensureRuntime: module.ensureWindowsRuntime }
     }
-  }
+  })
 }
 
 export function buildPackagedWindowsBackend(runtime: Runtime, backendArgs: string[], zeusHome: string) {

@@ -1,0 +1,91 @@
+name: ZeusAgent Ubuntu release command acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact ZeusAgent release version to inspect
+        required: true
+        default: '0.22.0'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  command:
+    name: Release npm and terminal installer on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.2'
+      - name: Download the exact release candidate assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir "$RUNNER_TEMP/zeus-command-assets"
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/zeus-command-assets" \
+            --pattern '*.tgz' --pattern 'linux-runtime-manifest.json' --pattern 'zeus-source-linux.tar.gz' \
+            --pattern 'install-linux.sh' --pattern 'SHA256SUMS.txt'
+          cd "$RUNNER_TEMP/zeus-command-assets"
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+      - name: Fetch and check the manifest's official Linux tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes git ripgrep
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, urllib.request
+          assets = pathlib.Path(os.environ['RUNNER_TEMP']) / 'zeus-command-assets'
+          manifest = json.loads((assets / 'linux-runtime-manifest.json').read_text())
+          assert manifest['commit'] == os.environ['GITHUB_SHA'], 'Run acceptance from the release source commit'
+          for asset in [manifest['uv'], *manifest['tools'].values()]:
+              assert asset['file'] == pathlib.Path(asset['file']).name
+              assert asset['url'].startswith('https://')
+              file = assets / asset['file']
+              urllib.request.urlretrieve(asset['url'], file)
+              assert hashlib.sha256(file.read_bytes()).hexdigest() == asset['sha256']
+          PY
+      - name: Verify published installer is the reviewed renderer output
+        run: |
+          node --input-type=module - <<'JS'
+          import { readFile, readdir } from 'node:fs/promises';
+          import assert from 'node:assert/strict';
+          import path from 'node:path';
+          import { stageLinuxInstaller } from './scripts/stage_zeus_npm.mjs';
+          const assets = path.join(process.env.RUNNER_TEMP, 'zeus-command-assets');
+          const packages = (await readdir(assets)).filter(file => file.endsWith('.tgz'));
+          assert.equal(packages.length, 1);
+          const rendered = path.join(process.env.RUNNER_TEMP, 'reviewed-install-linux.sh');
+          await stageLinuxInstaller({packagePath:path.join(assets, packages[0]),linuxManifestPath:path.join(assets,'linux-runtime-manifest.json'),outputPath:rendered});
+          assert.equal(await readFile(rendered, 'utf8'), await readFile(path.join(assets,'install-linux.sh'),'utf8'));
+          JS
+      - name: Actual global npm and independent terminal installation
+        run: |
+          node scripts/linux-cli-acceptance.mjs \
+            --package "$RUNNER_TEMP"/zeus-command-assets/*.tgz \
+            --assets "$RUNNER_TEMP/zeus-command-assets" \
+            --manifest "$RUNNER_TEMP/zeus-command-assets/linux-runtime-manifest.json" \
+            --output "$RUNNER_TEMP/zeus-command-acceptance.json"
+      - name: Retain actual command receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zeus-command-acceptance-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/zeus-command-acceptance.json
+            ${{ runner.temp }}/zeus-command-acceptance.json.log
+          retention-days: 14

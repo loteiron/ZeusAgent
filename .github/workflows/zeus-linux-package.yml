@@ -1,0 +1,136 @@
+name: ZeusAgent Ubuntu package acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build reviewed Ubuntu x64 package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.2'
+      - name: Install supported npm and build dependencies
+        run: |
+          npm install --global npm@11.17.0 --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install --yes git ripgrep libsecret-1-dev
+          npm ci --no-audit --no-fund
+      - name: Check Linux runtime and universal command boundaries
+        run: node --test scripts/linux-runtime.test.mjs scripts/install-linux.test.mjs scripts/stage_zeus_npm.test.mjs
+      - name: Build reviewed web and terminal interfaces
+        run: |
+          npm run build --workspace @zeus/ink
+          npm run build --workspace ui-tui
+          npm run build --workspace web
+      - name: Fetch official pinned tools and stage immutable Linux source
+        run: |
+          python - <<'PY'
+          import pathlib, sys, urllib.request
+          sys.path.insert(0, 'scripts')
+          from stage_linux_release import PINS, verify_tool
+          cache = pathlib.Path('/tmp/zeus-release-tools')
+          cache.mkdir()
+          for pin in PINS.values():
+              urllib.request.urlretrieve(pin['url'], cache / pin['file'])
+              verify_tool(cache, pin)
+          PY
+          python scripts/stage_linux_release.py --cache /tmp/zeus-release-tools --output /tmp/zeus-linux-payload > /tmp/zeus-linux-stage-receipt.json
+          mkdir -p apps/desktop/build/backend-linux
+          cp /tmp/zeus-linux-payload/* apps/desktop/build/backend-linux/
+          mv apps/desktop/build/backend-linux/linux-runtime-manifest.json apps/desktop/build/backend-linux/runtime-manifest.json
+      - name: Build actual desktop deb
+        working-directory: apps/desktop
+        run: |
+          npm run build
+          npm run builder -- --linux deb --x64 --publish never
+      - name: Assemble checked candidate artifact
+        run: |
+          mkdir -p /tmp/zeus-linux-candidate
+          cp apps/desktop/release/ZeusAgent-*-linux-x64.deb /tmp/zeus-linux-candidate/
+          cp /tmp/zeus-linux-payload/{linux-runtime-manifest.json,linux-runtime.mjs,zeus-source-linux.tar.gz} /tmp/zeus-linux-candidate/
+          cp /tmp/zeus-linux-stage-receipt.json /tmp/zeus-linux-candidate/
+          cp apps/desktop/build/install-stamp.json /tmp/zeus-linux-candidate/
+          cd /tmp/zeus-linux-candidate
+          sha256sum ./* > SHA256SUMS.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zeus-linux-candidate
+          path: /tmp/zeus-linux-candidate
+          retention-days: 14
+
+  install:
+    name: Install same deb on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.2'
+      - name: Download exact build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name zeus-linux-candidate --dir "$RUNNER_TEMP/zeus-linux-candidate"
+      - name: Verify artifact checksums and install with APT
+        run: |
+          cd "$RUNNER_TEMP/zeus-linux-candidate"
+          sha256sum --check SHA256SUMS.txt
+          sudo apt-get update
+          sudo apt-get install --yes ./ZeusAgent-*-linux-x64.deb xvfb
+          dpkg-query -S /usr/bin/zeus
+          test -x /usr/bin/zeus
+          test -x /opt/ZeusAgent/ZeusAgent
+      - name: Install separate acceptance driver
+        run: |
+          mkdir "$RUNNER_TEMP/zeus-package-driver"
+          npm install --prefix "$RUNNER_TEMP/zeus-package-driver" --ignore-scripts --no-audit --no-fund playwright@1.62.1
+      - name: Cold CLI, real packaged GUI, and shared runtime acceptance
+        env:
+          ZEUS_ACCEPTANCE_DRIVER: ${{ runner.temp }}/zeus-package-driver
+          ZEUS_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/zeus-ubuntu-evidence
+        run: xvfb-run -a node scripts/ci/linux_package_acceptance.mjs
+      - name: Reinstall the same deb without altering saved user data
+        run: |
+          sudo apt-get install --reinstall --yes "$RUNNER_TEMP"/zeus-linux-candidate/ZeusAgent-*-linux-x64.deb
+          test -f "$RUNNER_TEMP/zeus-ubuntu-evidence/state/preserved.txt"
+      - name: Remove the package and preserve user state and runtime
+        run: |
+          sudo apt-get remove --yes zeus-agent
+          test ! -e /usr/bin/zeus
+          test ! -e /opt/ZeusAgent/ZeusAgent
+          test -f "$RUNNER_TEMP/zeus-ubuntu-evidence/state/preserved.txt"
+          test -n "$(find "$RUNNER_TEMP/zeus-ubuntu-evidence/data/ZeusAgent/runtimes" -name ready.json -print -quit)"
+      - name: Retain observed results, not provider credentials
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zeus-linux-acceptance-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/zeus-ubuntu-evidence/*.json
+            ${{ runner.temp }}/zeus-ubuntu-evidence/*.log
+            ${{ runner.temp }}/zeus-ubuntu-evidence/*.png
+          retention-days: 14

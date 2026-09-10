@@ -16,18 +16,30 @@ function run(command, args, env = process.env) {
     const interrupt = () => {
       // Windows console control events already reach the child. Node's kill
       // would terminate the bootstrap before it can stop its Python process.
-      if (process.platform !== 'win32') child.kill('SIGINT');
+      if (process.platform !== 'win32' && !process.stdin.isTTY) child.kill('SIGINT');
     };
+    const terminate = () => child.kill('SIGTERM');
     process.on('SIGINT', interrupt);
-    child.on('error', reject);
+    process.on('SIGTERM', terminate);
+    const cleanup = () => { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); };
+    child.on('error', error => { cleanup(); reject(error); });
     child.on('close', (code, signal) => {
-      process.removeListener('SIGINT', interrupt);
+      cleanup();
       resolve(code ?? (signal === 'SIGINT' ? 130 : 1));
     });
   });
 }
 
+export async function launchLinuxDesktop(args, executable = '/opt/ZeusAgent/ZeusAgent') {
+  if (!existsSync(executable)) throw new Error('Install the ZeusAgent desktop .deb from https://github.com/loteiron/ZeusAgent/releases.');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ZEUS_DESKTOP_RESOURCES;
+  return run(executable, args, env);
+}
+
 export async function launchDesktop(args, registryKey = desktopKey) {
+  if (process.platform === 'linux') return launchLinuxDesktop(args);
   const hint = 'Install the ZeusAgent desktop setup.exe from https://github.com/loteiron/ZeusAgent/releases.';
   const scratch = mkdtempSync(path.join(tmpdir(), 'zeus-desktop-location-'));
   const exported = path.join(scratch, 'location.reg');
@@ -56,16 +68,20 @@ export async function launchDesktop(args, registryKey = desktopKey) {
 }
 
 export async function main(args = process.argv.slice(2)) {
+  if (!['win32', 'linux'].includes(process.platform) || process.arch !== 'x64') {
+    throw new Error('This ZeusAgent release supports Windows x64 and Linux x64.');
+  }
   if (args[0] === '--desktop') return launchDesktop(args.slice(1));
-  // Only the NSIS shim supplies this internal bridge to its bundled Electron.
+  // Only the desktop installer shim supplies this bridge to bundled Electron.
   // A normal npm/Node invocation always uses its own release manifest.
   const resources = process.versions.electron && process.env.ZEUS_DESKTOP_RESOURCES;
+  const helper = process.platform === 'linux' ? 'linux-runtime.mjs' : 'windows-runtime.mjs';
   const runtime = resources
-    ? path.join(resources, 'backend/windows-runtime.mjs')
-    : path.join(packageRoot, 'lib/windows-runtime.mjs');
+    ? path.join(resources, 'backend', helper)
+    : path.join(packageRoot, 'lib', helper);
   const manifest = resources
     ? path.join(resources, 'backend/runtime-manifest.json')
-    : path.join(packageRoot, 'runtime-manifest.json');
+    : path.join(packageRoot, process.platform === 'linux' ? 'linux-runtime-manifest.json' : 'runtime-manifest.json');
   if (!existsSync(runtime) || !existsSync(manifest)) {
     throw new Error('ZeusAgent package is incomplete. Reinstall the npm release package or desktop installer.');
   }

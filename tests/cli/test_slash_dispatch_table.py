@@ -48,7 +48,9 @@ def test_registry_names_resolve_into_the_table():
         assert cmd is not None and ZeusAgentCLI._slash_handler(cmd.name) is not None, name
     # registry commands the CLI never handled inline must still fall through
     dispatched = {c.name for c in COMMAND_REGISTRY if ZeusAgentCLI._slash_handler(c.name)}
-    assert dispatched == set(OLD_CHAIN_COMMANDS) - {"exit"} | {"quit"}
+    # The historical chain remains a parity baseline; Zeus adds an explicitly
+    # registered read-only evidence handler after that refactor.
+    assert dispatched == (set(OLD_CHAIN_COMMANDS) - {"exit"}) | {"quit", "evidence"}
 
 
 def _cli():
@@ -94,3 +96,14 @@ def test_unknown_command_falls_through():
     with patch.object(ZeusAgentCLI, "_process_unregistered_slash", return_value=True) as m:
         assert c.process_command("/definitely-not-a-command x") is True
         m.assert_called_once_with("/definitely-not-a-command x", "/definitely-not-a-command x")
+
+
+def test_evidence_uses_normal_dispatch_and_pre_command_hook():
+    c = _cli()
+    with patch.object(ZeusAgentCLI, "_handle_evidence_command") as handler, \
+            patch("zeus_cli.plugins.fire_pre_command_hook") as hook:
+        assert c.process_command("/evidence status") is True
+    handler.assert_called_once_with("/evidence status")
+    hook.assert_called_once()
+    assert hook.call_args.kwargs["command"] == "evidence"
+    assert c._pending_resume_sessions is None

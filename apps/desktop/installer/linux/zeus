@@ -1,0 +1,5 @@
+#!/bin/sh
+# dpkg owns this file at /usr/bin/zeus. Provisioning runs as the invoking user.
+export ELECTRON_RUN_AS_NODE=1
+export ZEUS_DESKTOP_RESOURCES=/opt/ZeusAgent/resources
+exec /opt/ZeusAgent/ZeusAgent /opt/ZeusAgent/resources/cli/zeus.mjs "$@"

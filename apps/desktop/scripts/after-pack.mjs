@@ -8,10 +8,8 @@
  * to the stock "Electron" icon/name (the bug when the stamp lived only in
  * install.ps1, which the update path doesn't use).
  *
- * Windows-only: rcedit edits PE resources, irrelevant on macOS/Linux where the
- * app identity comes from the bundle Info.plist / desktop entry. Best-effort:
- * a stamp failure must never fail an otherwise-good build (worst case is the
- * stock icon, not a broken app), so we log and resolve rather than throw.
+ * On Linux, make the staged CLI launcher executable before FPM records its
+ * permissions in the .deb. Windows PE identity stamping remains best-effort.
  *
  * electron-builder passes a context with:
  *   - electronPlatformName: 'win32' | 'darwin' | 'linux'
@@ -19,11 +17,17 @@
  *   - packager.appInfo.productFilename: the exe basename (e.g. 'ZeusAgent')
  */
 
+import { chmod } from 'node:fs/promises'
 import path from 'node:path'
 
 import { stampExeIdentity } from './set-exe-identity.mjs'
 
 export default async function afterPack(context) {
+  if (context.electronPlatformName === 'linux') {
+    // The copy staged for FPM must be executable even after a Windows checkout.
+    await chmod(path.join(context.appOutDir, 'resources', 'cli', 'zeus'), 0o755)
+    return
+  }
   if (context.electronPlatformName !== 'win32') {
     return
   }

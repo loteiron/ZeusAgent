@@ -20,13 +20,19 @@ remain their respective owners' property. Renaming does not replace these obliga
 ZeusAgent modifications: independent product names and namespaces; separate `.zeus`
 state; original lightning mark and theme; stricter goal decisions; atomic goal migration;
 finite retry values; workspace-bound verification receipts and baselines; guarded
-Hermes data migration; scoped Telegram controls; Windows setup and npm launchers;
+Hermes data migration; scoped Telegram controls; Windows setup, Ubuntu packages
+and shared npm launchers;
 and source/runtime distribution protections.
 
 Windows release tools retain their original archives and licenses. Their pinned
 source releases are Git for Windows `v2.55.0.windows.5`, Astral uv `0.11.33`,
 Node.js `v22.23.2`, and ripgrep `15.2.0`. The runtime manifest contains the official
 asset URLs and SHA-256 digests; original licenses remain in each unpacked tool.
+
+Linux releases bundle the original Astral uv `0.11.33` and Node.js `v22.23.2`
+archives with their licenses. Python is installed as a private managed runtime;
+Git and ripgrep remain distribution-managed system packages. Linux source archives
+preserve the reviewed Git executable modes and include source/build manifests.
 
 No trademark clearance for the name ZeusAgent is claimed. External APIs, hosted services,
 model licenses and third-party dependencies retain their own terms and identities.

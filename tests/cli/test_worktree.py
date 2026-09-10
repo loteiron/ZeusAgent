@@ -1379,11 +1379,41 @@ class TestPrMergedEscapeHatch:
 
     @staticmethod
     def _stub_gh(tmp_path, monkeypatch, stdout='[{"number": 1}]', exit_code=0):
-        gh = tmp_path / "bin" / "gh"
+        gh = tmp_path / "bin" / ("gh.exe" if os.name == "nt" else "gh")
         gh.parent.mkdir(parents=True, exist_ok=True)
-        gh.write_text(f"#!/bin/sh\nprintf '%s' '{stdout}'\nexit {exit_code}\n")
+        if os.name == "nt":
+            # CreateProcess('gh', shell=False) requires an actual executable;
+            # PATHEXT batch aliases do not exercise the production contract.
+            image = getattr(TestPrMergedEscapeHatch, "_windows_gh_image", None)
+            if image is None:
+                source = gh.with_suffix(".cs")
+                source.write_text('''using System;
+using System.IO;
+using System.Reflection;
+class FixtureGh {
+    static int Main() {
+        string self = Assembly.GetExecutingAssembly().Location;
+        Console.Write(File.ReadAllText(self + ".stdout"));
+        return Int32.Parse(File.ReadAllText(self + ".exit"));
+    }
+}''')
+                framework = Path(os.environ["SystemRoot"]) / "Microsoft.NET"
+                compilers = list(framework.glob("Framework*/v4.0.30319/csc.exe"))
+                assert compilers, "Native Windows executable fixture requires the installed .NET Framework compiler"
+                subprocess.run(
+                    [str(compilers[0]), "/nologo", "/target:exe", f"/out:{gh}", str(source)],
+                    capture_output=True, text=True, check=True, timeout=30,
+                )
+                image = gh.read_bytes()
+                TestPrMergedEscapeHatch._windows_gh_image = image
+            else:
+                gh.write_bytes(image)
+            Path(str(gh) + ".stdout").write_text(stdout)
+            Path(str(gh) + ".exit").write_text(str(exit_code))
+        else:
+            gh.write_text(f"#!/bin/sh\nprintf '%s' '{stdout}'\nexit {exit_code}\n")
         gh.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{gh.parent}:{os.environ['PATH']}")
+        monkeypatch.setenv("PATH", f"{gh.parent}{os.pathsep}{os.environ['PATH']}")
 
     def test_merged_pr_tree_is_reaped(self, git_repo, tmp_path, monkeypatch):
         import cli

@@ -116,7 +116,44 @@ Internet access is required for this first setup and for hosted model providers.
 The Windows installer is currently unsigned. Its SHA-256 checksum is published
 with the [release assets](https://github.com/loteiron/ZeusAgent/releases/tag/v0.22.0).
 
-### Install the command with npm
+## Install on Ubuntu Linux
+
+For Ubuntu 22.04 or 24.04 on x86_64, download the
+[desktop .deb](https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/ZeusAgent-0.22.0-linux-x64.deb)
+and install it from your download directory:
+
+```sh
+sudo apt install ./ZeusAgent-0.22.0-linux-x64.deb
+zeus setup
+zeus
+zeus --desktop
+```
+
+APT installs the desktop dependencies, Git and ripgrep. The package adds an app
+menu entry and `/usr/bin/zeus`, available from any project directory. Run Zeus as
+your normal user. First launch sets up checksum-pinned Node.js, uv, Python 3.12.12
+and the locked Python dependencies in your own versioned runtime. It does not
+require a pre-existing Python or Node installation and needs internet access for
+the first setup. Desktop and the command reuse this runtime.
+
+For a terminal installation without Desktop or a pre-existing npm installation:
+
+```sh
+curl -fL --proto '=https' --proto-redir '=https' -o install-linux.sh https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/install-linux.sh
+bash install-linux.sh
+# Open a new terminal, then:
+zeus setup
+zeus
+```
+
+The installer verifies the release archive and private Node runtime, installs a
+launcher in `~/.local/bin`, and adds that directory to supported shell profiles.
+It uses `sudo` only when Ubuntu system dependencies are missing. It preserves an
+unrelated existing `zeus` launcher and supports `--no-modify-path` for custom shell
+setups. Runtime files live under `${XDG_DATA_HOME:-~/.local/share}/ZeusAgent`;
+conversations and settings live separately in `~/.zeus`.
+
+## Install the command with npm
 
 With Node.js 22.22 or later, install the same release directly from GitHub:
 
@@ -126,15 +163,17 @@ zeus setup
 zeus
 ```
 
-The npm package is a Windows x64 launcher. Its first run downloads and verifies
-the matching runtime and tools. `zeus --desktop` opens the Desktop installation
-when `setup.exe` is installed. The command preserves arguments and the caller's
-directory in CMD and PowerShell. This installation URL does not require an npm
+The npm package supports Windows x64 and Linux x64. Its first run downloads and
+verifies the matching runtime and tools. Linux requires system Git and ripgrep
+(`sudo apt install git ripgrep` on Ubuntu). `zeus --desktop` opens Desktop when
+its Windows setup or Linux `.deb` is installed. The command preserves arguments
+and the caller's project directory. This installation URL does not require an npm
 registry account or a separately published registry package.
 
-Install a newer release through its setup or npm asset. Packaged runtimes refuse
+Install a newer release through its setup, `.deb`, terminal installer or npm asset. Packaged runtimes refuse
 in-place source updates; configuration and conversations remain in your Zeus
-home directory. Uninstalling Desktop removes its own PATH entry and keeps user data.
+home directory. Uninstalling Desktop removes its command registration and keeps
+user data and versioned runtime caches.
 
 ## Run from source
 
@@ -223,8 +262,9 @@ and namespace, isolated ZeusAgent state, source setup and launch tools, and
 changes to command routing, retry handling, and Windows behavior. Core agent
 capabilities build on Hermes.
 
-Windows releases provide an unsigned setup executable and an npm launcher asset;
-Linux and macOS use source installation. Install updates from ZeusAgent's release
+Windows releases provide an unsigned setup executable; Ubuntu releases provide
+a `.deb` and terminal installer. A shared npm launcher supports both platforms.
+macOS uses source installation. Install updates from ZeusAgent's release
 assets. Automatic upstream replacement is disabled for packaged runtimes.
 Migration is an explicit action in Settings; importing history does not reconnect
 accounts or resume old jobs.

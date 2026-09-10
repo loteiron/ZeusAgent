@@ -273,6 +273,7 @@ import { runNativeLogin } from './native-oauth-login'
 import { loadNativeTokenSet, type NativeTokenStoreIo, persistNativeTokenSet } from './native-token-store'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import { LEGACY_OAUTH_PARTITION, resolveOauthPartition } from './oauth-partition'
+import { buildPackagedLinuxBackend, createPackagedLinuxRuntime, packagedLinuxManifest } from './packaged-linux-runtime'
 import {
   buildPackagedWindowsBackend,
   createPackagedWindowsRuntime,
@@ -836,14 +837,20 @@ function pathWithZeusAgentManagedNode(...entries) {
 // up with identical layouts and can share one install.
 const ACTIVE_ZEUS_ROOT = path.join(ZEUS_HOME, 'zeus-agent')
 
-const BUNDLED_WINDOWS_MANIFEST = packagedWindowsManifest({
+const bundledRuntimeLocation = {
   isPackaged: IS_PACKAGED,
   platform: process.platform,
   resourcesPath: process.resourcesPath
-})
+}
 
-const bundledWindowsRuntime = BUNDLED_WINDOWS_MANIFEST
-  ? createPackagedWindowsRuntime({ manifestPath: BUNDLED_WINDOWS_MANIFEST })
+const BUNDLED_RUNTIME_MANIFEST =
+  packagedWindowsManifest(bundledRuntimeLocation) ?? packagedLinuxManifest(bundledRuntimeLocation)
+
+const createBundledRuntime = process.platform === 'win32' ? createPackagedWindowsRuntime : createPackagedLinuxRuntime
+const buildBundledBackend = process.platform === 'win32' ? buildPackagedWindowsBackend : buildPackagedLinuxBackend
+
+const bundledRuntime = BUNDLED_RUNTIME_MANIFEST
+  ? createBundledRuntime({ manifestPath: BUNDLED_RUNTIME_MANIFEST })
   : null
 
 let bundledRuntimeSetupPromise = null
@@ -5028,13 +5035,13 @@ function resolveZeusAgentBackend(backendArgs) {
     }
   }
 
-  // Packaged Windows owns an immutable release runtime. Resolve it before
+  // Packaged Windows/Linux own immutable release runtimes. Resolve them before
   // ACTIVE/PATH so an older install or our own zeus.cmd cannot win discovery.
-  if (bundledWindowsRuntime) {
-    const cached = !bootstrapRepairRequested && bundledWindowsRuntime.peek()
+  if (bundledRuntime) {
+    const cached = !bootstrapRepairRequested && bundledRuntime.peek()
 
     if (cached) {
-      return buildPackagedWindowsBackend(cached, backendArgs, ZEUS_HOME)
+      return buildBundledBackend(cached, backendArgs, ZEUS_HOME)
     }
 
     return {
@@ -5045,8 +5052,11 @@ function resolveZeusAgentBackend(backendArgs) {
       bootstrap: true,
       env: {},
       shell: false,
-      bundledManifest: BUNDLED_WINDOWS_MANIFEST,
-      activeRoot: path.join(process.env.LOCALAPPDATA || os.homedir(), 'ZeusAgent', 'runtimes'),
+      bundledManifest: BUNDLED_RUNTIME_MANIFEST,
+      activeRoot:
+        process.platform === 'win32'
+          ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'ZeusAgent', 'runtimes')
+          : path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'ZeusAgent', 'runtimes'),
       platform: process.platform
     }
   }
@@ -5210,20 +5220,20 @@ async function ensureRuntime(backend) {
     return backend
   }
 
-  if (backend.bundledManifest && bundledWindowsRuntime) {
+  if (backend.bundledManifest && bundledRuntime) {
     if (bootstrapFailure) {
       throw bootstrapFailure
     }
 
     if (!bundledRuntimeSetupPromise) {
       if (bootstrapRepairRequested) {
-        bundledWindowsRuntime.reset()
+        bundledRuntime.reset()
       }
 
       bootstrapRepairRequested = false
       bootstrapRepairAttempt = 0
       bootstrapAbortController = new AbortController()
-      bundledRuntimeSetupPromise = bundledWindowsRuntime
+      bundledRuntimeSetupPromise = bundledRuntime
         .ensure({
           signal: bootstrapAbortController.signal,
           onEvent: event => {
@@ -5244,7 +5254,7 @@ async function ensureRuntime(backend) {
     const runtime = await bundledRuntimeSetupPromise
     await advanceBootProgress('runtime.ready', 'ZeusAgent runtime is ready', 82)
 
-    return buildPackagedWindowsBackend(runtime, backend.args, ZEUS_HOME)
+    return buildBundledBackend(runtime, backend.args, ZEUS_HOME)
   }
 
   // backend.kind === 'bootstrap-needed' means resolveZeusAgentBackend couldn't
@@ -13088,14 +13098,14 @@ async function startZeusAgent() {
 
         const backend = resolveZeusAgentBackend(backendArgs)
 
-        if ('bundledManifest' in backend && bundledWindowsRuntime && !bootstrapRepairRequested) {
+        if ('bundledManifest' in backend && bundledRuntime && !bootstrapRepairRequested) {
           try {
             // Read-only ready marker validation precedes the local/remote gate;
             // only the user's local choice is allowed to start installation.
-            const runtime = await bundledWindowsRuntime.readCached()
+            const runtime = await bundledRuntime.readCached()
 
             if (runtime) {
-              return buildPackagedWindowsBackend(runtime, backendArgs, ZEUS_HOME)
+              return buildBundledBackend(runtime, backendArgs, ZEUS_HOME)
             }
           } catch (error) {
             rememberLog(`[bootstrap] bundled runtime is not ready: ${error.message}`)
@@ -15284,7 +15294,7 @@ ipcMain.handle('zeus:bootstrap:reset', async () => {
   rememberLog('[bootstrap] reset requested by renderer; clearing latched failure')
   await teardownPrimaryBackendAndWait()
   bootstrapFailure = null
-  bundledWindowsRuntime?.reset()
+  bundledRuntime?.reset()
   backendStartFailure = null
   remoteReauthFailure = null
   getFirstRunSetupGate().resetForRetry()
@@ -15337,7 +15347,7 @@ ipcMain.handle('zeus:bootstrap:repair', async () => {
   // breaks the infinite reinstall loop the user hit.
   bootstrapRepairRequested = repairDecision.hardReinstall
   bootstrapFailure = null
-  bundledWindowsRuntime?.reset()
+  bundledRuntime?.reset()
   backendStartFailure = null
   remoteReauthFailure = null
   getFirstRunSetupGate().resetForRepair()
@@ -16253,7 +16263,7 @@ ipcMain.handle('zeus:connection-config:apply', async (_event, payload) => {
               // A remote connection bypasses local runtime/bootstrap failures. Clear
               // the local-install latch so unsupported/failure escape paths can re-home.
               bootstrapFailure = null
-              bundledWindowsRuntime?.reset()
+              bundledRuntime?.reset()
             },
             mode: config.mode,
             notifyConnectionApplied: sendConnectionApplied,

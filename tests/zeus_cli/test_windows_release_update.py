@@ -6,17 +6,32 @@ import pytest
 from zeus_cli.update_contract import evaluate_update_admission
 
 
-@pytest.mark.parametrize("contents", ['{"schemaVersion":1,"manager":"zeus-windows-release"}', "corrupt {", ""])
-def test_release_marker_refuses_before_mutable_install_heuristics(tmp_path, monkeypatch, contents):
+@pytest.mark.parametrize("contents,expected", [
+    ('{"schemaVersion":1,"manager":"zeus-windows-release"}', "zeus-windows-release"),
+    ('{"schemaVersion":1,"manager":"zeus-linux-release"}', "zeus-linux-release"),
+    ("corrupt {", "zeus-packaged-release"), ("", "zeus-packaged-release"),
+    ('{"manager":"git"}', "zeus-packaged-release"),
+])
+def test_release_marker_refuses_before_mutable_install_heuristics(tmp_path, monkeypatch, contents, expected):
     (tmp_path / ".zeus-runtime.json").write_text(contents, encoding="utf-8")
     def unexpected(*args, **kwargs):
         pytest.fail("A packaged runtime must never enter mutable install detection")
     monkeypatch.setattr("zeus_cli.config.detect_install_method", unexpected)
     refusal = evaluate_update_admission(tmp_path)
     assert refusal is not None
-    assert refusal.code == "zeus-windows-release"
+    assert refusal.code == expected
     assert "loteiron/ZeusAgent/releases" in refusal.message
     assert "NousResearch" not in refusal.message
+    if expected == "zeus-linux-release":
+        assert "Linux" in refusal.message and ".deb" in refusal.message
+        assert "Windows" not in refusal.message
+
+
+def test_non_regular_marker_is_still_immutable_without_opening_it(tmp_path, monkeypatch):
+    marker = tmp_path / ".zeus-runtime.json"
+    marker.mkdir()
+    refusal = evaluate_update_admission(tmp_path)
+    assert refusal.code == "zeus-packaged-release"
 
 
 @pytest.mark.parametrize("check", [False, True])
