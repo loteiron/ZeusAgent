@@ -13,7 +13,7 @@ function Update-ZeusCliPath {
         [string]$RegistrationKeyPath = 'Software\ZeusAgent\DesktopCLI'
     )
 
-    $directory = Join-Path ([IO.Path]::GetFullPath($InstallDirectory)) 'bin'
+    $directory = [IO.Path]::Combine([IO.Path]::GetFullPath($InstallDirectory), 'bin')
     $comparable = ConvertTo-ComparablePath $directory
     $hasher = [Security.Cryptography.SHA256]::Create()
     try {
@@ -35,7 +35,7 @@ function Update-ZeusCliPath {
         $matches = @($entries | Where-Object { [string]::Equals((ConvertTo-ComparablePath $_), $comparable, [StringComparison]::OrdinalIgnoreCase) })
 
         if ($Action -eq 'Install') {
-            if (-not (Test-Path -LiteralPath (Join-Path $directory 'zeus.cmd') -PathType Leaf)) {
+            if (-not [IO.File]::Exists([IO.Path]::Combine($directory, 'zeus.cmd'))) {
                 throw 'The installed ZeusAgent command launcher is missing.'
             }
             if ($null -eq $owner) { $owner = $registry.CreateSubKey($ownerPath) }

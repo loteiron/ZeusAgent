@@ -13,6 +13,10 @@ MODULE = Path(__file__).resolve().parents[1] / "apps/desktop/installer/cli-path.
 
 
 def _probe(tmp_path: Path, body: str) -> dict:
+    install_directory = tmp_path / "App folder Ω"
+    launcher = install_directory / "bin" / "zeus.cmd"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("@echo off", encoding="ascii")
     script = tmp_path / "probe.ps1"
     script.write_text(
         r'''
@@ -31,9 +35,7 @@ $environmentKey = "$testRoot\Environment"
 $registrationKey = "$testRoot\Registration"
 $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($environmentKey)
 Trace-Stage "private registry created"
-$bin = Join-Path $InstallDirectory "bin"
-New-Item -ItemType Directory -Path $bin -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $bin "zeus.cmd") -Value "@echo off" -Encoding Ascii
+$bin = [IO.Path]::Combine($InstallDirectory, "bin")
 Trace-Stage "launcher fixture ready"
 function Change([string]$Action) {
     Trace-Stage "$Action begin"
@@ -56,7 +58,7 @@ try {
         result = subprocess.run(
             [str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
              "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
-             "-ModulePath", str(MODULE), "-InstallDirectory", str(tmp_path / "App folder Ω")],
+             "-ModulePath", str(MODULE), "-InstallDirectory", str(install_directory)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
@@ -115,3 +117,21 @@ def test_uninstall_preserves_preexisting_entry_and_restores_missing_path(tmp_pat
     assert result["removed"] is True
     assert result["discovered"] == result["install"]
     assert result["retained"] == r"C:\DifferentInstall"
+
+
+def test_path_registration_does_not_require_management_module_autoload(tmp_path: Path):
+    result = _probe(tmp_path, r'''
+    $envKey.SetValue("Path", "C:\Tools", [Microsoft.Win32.RegistryValueKind]::String)
+    $PSModuleAutoLoadingPreference = 'None'
+    try {
+        Change "Install"
+        $installed = Read-Path
+        Change "Uninstall"
+        $after = Read-Path
+    } finally {
+        $PSModuleAutoLoadingPreference = 'All'
+    }
+    @{ installed=$installed; after=$after; bin=$bin } | ConvertTo-Json -Compress
+''')
+    assert result["installed"] == "C:\\Tools;" + result["bin"]
+    assert result["after"] == r"C:\Tools"

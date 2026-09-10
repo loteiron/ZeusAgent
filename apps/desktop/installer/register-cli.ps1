@@ -4,7 +4,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 try {
-    Import-Module (Join-Path $PSScriptRoot 'cli-path.psm1') -Force
+    Import-Module ([IO.Path]::Combine($PSScriptRoot, 'cli-path.psm1')) -Force
     Update-ZeusCliPath -Action $Action -InstallDirectory $InstallDirectory
     Add-Type -TypeDefinition @'
 using System;
