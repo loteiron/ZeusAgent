@@ -674,6 +674,16 @@ class GatewayBusySessionMixin:
             )
             return True  # handled (silently dropped); do not fall through
 
+        # Configured aliases and unknown commands do not bypass the adapter's static
+        # registry guard. Resolve them here before busy input can steer or interrupt.
+        if event.get_command():
+            handled, reply = await self._hm_busy_slash_or_photo(event, event.source, session_key)
+            if handled:
+                adapter = self._adapter_for_source(event.source)
+                if reply and adapter:
+                    await self._send_busy_reply(event, adapter, reply)
+                return True
+
         effective_mode = self._effective_busy_input_mode(event.source)
         if self._draining:  # gateway restarting/stopping
             await self._send_busy_drain_notice(event, session_key, effective_mode)

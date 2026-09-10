@@ -40,10 +40,11 @@ def _cwd_marker(session_id: str) -> str:
     return f"__ZEUS_CWD_{session_id}__"
 
 
-def _cwd_marker_printf(marker: str) -> str:
+def _cwd_marker_printf(marker: str, *, native_cwd: bool = False) -> str:
     """Emit the CWD marker on its own line (leading ``\\n`` guards against a
     command whose output lacks a trailing newline; ``_split_cwd_marker`` strips it)."""
-    return f"printf '\\n{marker}%s{marker}\\n' \"$(pwd -P)\""
+    pwd_command = "builtin pwd -P -W" if native_cwd else "pwd -P"
+    return f"printf '\\n{marker}%s{marker}\\n' \"$({pwd_command})\""
 
 
 def _export_dump_excluding_session_vars(tmp_path: str, excluded_names: Iterable[str] = ()) -> str:
@@ -79,6 +80,7 @@ def _export_dump_excluding_session_vars(tmp_path: str, excluded_names: Iterable[
 
 def _snapshot_bootstrap_script(
     *, quoted_cwd: str, quoted_snap: str, snap_tmp_template: str, excluded_names: Iterable[str], cwd_marker: str,
+    native_cwd: bool = False,
 ) -> str:
     """Login-shell bootstrap that captures env/functions/aliases into the snapshot. Atomic publish:
     assemble in a ``mktemp`` file, then ``mv`` over the final path so a concurrent ``source`` never
@@ -101,7 +103,7 @@ def _snapshot_bootstrap_script(
         # Publish only if assembly succeeded; otherwise drop the partial temp.
         f"mv -f {_SNAP_TMP} {quoted_snap} || rm -f {_SNAP_TMP}\n"
         f"builtin cd -- {quoted_cwd} 2>/dev/null || true\n"
-        f"{_cwd_marker_printf(cwd_marker)}\n")
+        f"{_cwd_marker_printf(cwd_marker, native_cwd=native_cwd)}\n")
 
 
 def _passthrough_save_restore(names: Iterable[str]) -> tuple[list[str], list[str]]:
@@ -122,7 +124,8 @@ def _passthrough_save_restore(names: Iterable[str]) -> tuple[list[str], list[str
 
 def _wrap_command_script(
     command: str, *, quoted_cwd: str, quoted_snap: str, snap_tmp_template: str,
-    passthrough_names: Iterable[str], snapshot_ready: bool, cwd_marker: str) -> str:
+    passthrough_names: Iterable[str], snapshot_ready: bool, cwd_marker: str,
+    native_cwd: bool = False) -> str:
     """Per-command bash script: source snapshot, cd, run, re-dump env, emit CWD marker.
     ``source`` stdout goes to /dev/null because macOS bash 3.2 / some Homebrew builds echo
     ``declare -x`` lines when sourcing. AI_AGENT/ZEUS_AGENT advertise the harness to remote
@@ -153,7 +156,7 @@ def _wrap_command_script(
             f"{{ {_export_dump_excluding_session_vars(_SNAP_TMP, passthrough_names)} "
             f"&& mv -f {_SNAP_TMP} {quoted_snap}; }} "
             f"2>/dev/null || rm -f {_SNAP_TMP} 2>/dev/null || true")
-    parts += [_cwd_marker_printf(cwd_marker), "exit $__zeus_ec"]
+    parts += [_cwd_marker_printf(cwd_marker, native_cwd=native_cwd), "exit $__zeus_ec"]
     return "\n".join(parts)
 
 

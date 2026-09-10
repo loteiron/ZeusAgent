@@ -15,6 +15,19 @@ import type { ZeusAgentApiRequest } from '@/global'
 // keep the short default so a genuinely-dead backend is still detected fast.
 export const STARTUP_REQUEST_TIMEOUT_MS = 60_000
 const DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS = 30_000
+
+// These requests inspect real source bytes or snapshot local databases. Keep
+// ordinary RPCs responsive while allowing bounded file work to finish on disk.
+const FILE_OPERATION_TIMEOUTS: Readonly<Record<string, number>> = {
+  'verification.status': 90_000,
+  'verification.baseline.capture': 180_000,
+  'verification.baseline.clear': 90_000,
+  'session.control.read': 90_000,
+  'session.control': 90_000,
+  'hermes.migration.scan': 180_000,
+  'hermes.migration.import': 600_000
+}
+
 // prompt.submit is effectively fire-and-forget: turn completion is signaled by
 // stream / message.complete events, NOT by the RPC return. A long turn (MoA
 // presets running references + aggregator in series, deep reasoning, large tool
@@ -34,6 +47,20 @@ export class ZeusAgentGateway extends JsonRpcGatewayClient {
       notConnectedErrorMessage: 'ZeusAgent gateway is not connected',
       requestTimeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS
     })
+  }
+
+  override request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return super.request<T>(
+      method,
+      params,
+      timeoutMs ?? FILE_OPERATION_TIMEOUTS[method] ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+      signal
+    )
   }
 }
 

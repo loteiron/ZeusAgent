@@ -9,6 +9,11 @@ from pathlib import Path
 
 
 def run_verify_command(args) -> int:
+    from zeus_cli.verification_report_cmd import run_evidence_command
+
+    evidence_result = run_evidence_command(args)
+    if evidence_result is not None:
+        return evidence_result
     from agent.verify import load_or_detect, manifest_path, run_verify, save_manifest
 
     root = Path(getattr(args, "path", None) or ".").resolve()
@@ -44,12 +49,29 @@ def run_verify_command(args) -> int:
         return 0
 
     phases = tuple(args.phase) if args.phase else None
+    from agent.verification_evidence import begin_verify_run
+    command = "zeus verify"
+    if phases:
+        command += "".join(f" --phase {phase}" for phase in phases)
+    if args.skip_start:
+        command += " --skip-start"
+    if args.port:
+        command += f" --port {args.port}"
+    command += f" --timeout {args.timeout} --ready-timeout {args.ready_timeout}"
+    session_id = getattr(args, "session", None) or os.environ.get("ZEUS_SESSION_ID")
+    try:
+        before = begin_verify_run(root=root, session_id=session_id, command=command,
+                                  scope="targeted" if phases or args.skip_start else "full")
+    except Exception:
+        # A failed evidence store cannot prevent the requested check itself from running.
+        before = None
     result = run_verify(
         root, recipe, phases=phases, phase_timeout=args.timeout, ready_timeout=args.ready_timeout,
         skip_start=args.skip_start, port_override=args.port,
     )
 
-    _record_evidence(root, recipe, result, partial=bool(phases or args.skip_start))
+    _record_evidence(root, recipe, result, partial=bool(phases or args.skip_start),
+                     workspace_before=before, command=command, session_id=session_id)
 
     if args.json:
         payload = result.to_dict()
@@ -80,7 +102,8 @@ def _merge_project_facts_commands(root: Path, recipe) -> None:
             existing.add(command)
 
 
-def _record_evidence(root: Path, recipe, result, *, partial: bool) -> None:
+def _record_evidence(root: Path, recipe, result, *, partial: bool, workspace_before=None,
+                     command="zeus verify", session_id=None) -> None:
     """Record the completed run into the verification evidence ledger.
 
     Fail-silent: a ledger problem must never change the CLI's exit code or output. ``partial``
@@ -95,11 +118,12 @@ def _record_evidence(root: Path, recipe, result, *, partial: bool) -> None:
             tails.append(f"[start] {recipe.start} -> {_readiness_status(result.readiness)}")
         record_verify_run(
             root=root,
-            session_id=os.environ.get("ZEUS_SESSION_ID"),
+            session_id=session_id or os.environ.get("ZEUS_SESSION_ID"),
             ok=result.ok,
-            command="zeus verify",
+            command=command,
             scope="targeted" if partial else "full",
             output="\n".join(tails),
+            workspace_before=workspace_before,
         )
     except Exception:
         pass

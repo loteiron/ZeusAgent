@@ -12,6 +12,7 @@ Covers the closed loop the rescoped PR is about:
 
 import argparse
 import json
+import subprocess
 
 import pytest
 
@@ -60,6 +61,8 @@ def _workspace(tmp_path, *, scripts=None, manifest_recipe=None):
         (zeus_dir / "environment.json").write_text(
             json.dumps({"version": 1, "recipe": manifest_recipe}), encoding="utf-8"
         )
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
     return project
 
 
@@ -70,7 +73,9 @@ def _workspace(tmp_path, *, scripts=None, manifest_recipe=None):
 
 def test_record_verify_run_marks_workspace_passed(zeus_home):
     project = _workspace(zeus_home)
-    event = record_verify_run(root=project, session_id="s1", ok=True, output="all green")
+    from agent.workspace_identity import capture_workspace
+    event = record_verify_run(root=project, session_id="s1", ok=True, output="all green",
+                              workspace_before=capture_workspace(project))
     assert event is not None
     assert event["status"] == "passed"
     assert event["kind"] == "verify"
@@ -81,7 +86,9 @@ def test_record_verify_run_marks_workspace_passed(zeus_home):
 
 def test_record_verify_run_records_failure(zeus_home):
     project = _workspace(zeus_home)
-    record_verify_run(root=project, session_id="s1", ok=False, output="boom")
+    from agent.workspace_identity import capture_workspace
+    record_verify_run(root=project, session_id="s1", ok=False, output="boom",
+                      workspace_before=capture_workspace(project))
     status = verification_status(session_id="s1", cwd=project)
     assert status["status"] == "failed"
 

@@ -334,9 +334,12 @@ class CLILoopsMixin:
                     max_turns = int(goals_cfg.get("max_turns", 20) or 20)
                 except Exception:
                     max_turns = 20
-                return GoalManager(session_id=sid, default_max_turns=max_turns)
+                return GoalManager(session_id=sid, default_max_turns=max_turns, workspace=os.getcwd())
             return make
-        return self._session_bound_manager("_goal_manager", "goal manager", load)
+        manager = self._session_bound_manager("_goal_manager", "goal manager", load)
+        if manager is not None:
+            manager.bind_workspace(os.getcwd())
+        return manager
 
     def _get_heartbeat_manager(self):
         """HeartbeatManager bound to the current session_id (see ``_session_bound_manager``)."""

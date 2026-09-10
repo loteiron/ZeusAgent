@@ -12,8 +12,13 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
+
+// Test-only host setup; no Electron code enters the plugin's runtime bundle.
+// eslint-disable-next-line no-restricted-imports
+import { findGitBash } from '../../../electron/find-git-bash'
 
 import { isLegacyDelegatedRoutine, normalizedProfileName, routineInputError, routinePrompt } from './cron'
 
@@ -21,8 +26,23 @@ import { isLegacyDelegatedRoutine, normalizedProfileName, routineInputError, rou
  *  the assertion is what the SHELL passed — not what the string looks like. */
 function argvOf(prompt: string): string[] {
   const command = prompt.slice(prompt.indexOf('zeus '), prompt.lastIndexOf('\n\nIf the command'))
-  const result = spawnSync('sh', ['-c', `zeus() { printf '%s\\037' "$@"; }\n${command}`], { encoding: 'utf8' })
 
+  // The terminal uses Git Bash on Windows; `sh` is commonly absent from PATH,
+  // while the WindowsApps bash alias may point to an unconfigured WSL install.
+  const shell =
+    process.platform === 'win32' ? findGitBash({ isWindows: true, env: process.env, fileExists: existsSync }) : 'sh'
+
+  if (!shell) {
+    throw new Error('Git Bash is required to verify delegated shell arguments on Windows.')
+  }
+
+  const result = spawnSync(shell, ['-c', `zeus() { printf '%s\\037' "$@"; }\n${command}`], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true
+  })
+
+  expect(result.error).toBeUndefined()
   expect(result.status, result.stderr).toBe(0)
 
   return result.stdout.split('\u001f').slice(0, -1)

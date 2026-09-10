@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">ZeusAgent</h1>
-<p align="center">A personal AI workspace for conversations, tools, and ongoing tasks.</p>
+<p align="center">A coding workspace that keeps evidence with the work.</p>
 <p align="center">Desktop · Terminal · Web · Messaging</p>
 
 ZeusAgent brings a shared agent core to an Electron desktop app, an interactive
@@ -15,6 +15,14 @@ and setup experience, with coordinated light and dark appearances.
 
 ## What you can do
 
+- **See what was actually checked.** Inspect separate test, lint, build, and
+  targeted-check results in Desktop's **Evidence** view. Source edits invalidate
+  old results; an unrelated passing check cannot hide a failure.
+- **Compare against a baseline.** Preserve observed results before editing and
+  distinguish fixed failures, new regressions, and problems that already existed.
+- **Require proof before delivery.** Goal quality gates record their workspace,
+  timing, output, and source identity. Required checks must be current and passing
+  before the goal can be marked complete.
 - **Continue your work.** Persistent sessions, memory, and reusable skills keep
   context and workflows available between conversations.
 - **Use real tools.** Work with files, execute terminal commands, browse the web,
@@ -24,9 +32,61 @@ and setup experience, with coordinated light and dark appearances.
 - **Organize ongoing tasks.** Delegate to subagents, schedule jobs, and manage
   separate profiles for different configurations and workspaces.
 - **Connect messaging services.** Use the gateway with configured adapters such
-  as Telegram, Discord, and Slack.
+  as Telegram, Discord, and Slack. Telegram's `/status` opens controls for status,
+  stopping a turn, and pausing or resuming a loop.
+- **Move from Hermes.** Preview and import conversations, compatible settings,
+  memories, skills, custom prompts, and named profiles from Desktop Settings.
 - **Pick your interface.** Use the same agent core from the desktop, CLI, Ink
   terminal UI, or web dashboard.
+
+## Engineering workflow
+
+Use `/zeus-engineering <task>` for a workflow that establishes a baseline,
+implements the change, challenges failure cases, and reports the observed
+results. In Desktop, open **Evidence** beside the coding workspace controls.
+
+```sh
+zeus verify --detect-only --json
+zeus verify --status --json
+zeus verify --capture-baseline --json
+```
+
+Detection and status do not execute a project recipe. Run the project's checks
+before capturing a baseline; capture accepts current failures as well as passes.
+Use `--session <name>` consistently when working outside an agent session.
+`--status` exits zero only for current passing evidence. Clear a comparison
+baseline with `zeus verify --clear-baseline`; check history is retained.
+
+Receipts describe **local Git source contents**, including uncommitted edits.
+They are not a guarantee of correctness and do not identify ignored dependencies,
+remote services, or runtime configuration. Unsupported source layouts remain
+unverified. A check's original result and its current freshness are separate.
+
+Telegram control commands remain separate from an active agent's message queue.
+Configured aliases follow the target command's busy policy; commands addressed
+to another bot are ignored. Conversation text and filesystem paths stay text.
+Status buttons are bound to the requesting user, chat, topic, and current
+session. An expired panel or a panel from before `/new` cannot control a new session.
+
+## Move from Hermes
+
+Open **Settings → Move from Hermes**, select the destination Zeus profile, and
+enter the Hermes home folder on the gateway computer (usually `~/.hermes`).
+Scan the folder, review the categories and conflicts, then import your selection.
+
+The importer preserves the source. Existing Zeus settings win, memories are
+appended, and conflicting files and skills receive separate names. Conversations
+receive stable imported IDs, so importing the same history again does not create
+duplicates. Existing files that require updates are backed up, and each import
+leaves a receipt in the selected Zeus profile. Restart Zeus after importing to
+reload configuration and history.
+
+API keys, login tokens, scheduled jobs, plugins, project pins, live processes,
+and gateway connections require separate setup. Conversation text and tool
+history transfer; attachments and external file references keep their original
+references and may need their original files. Named profiles are imported from
+the default Zeus profile. If Hermes changes during a scan or import, close it
+and scan again.
 
 ## Get started
 
@@ -95,13 +155,16 @@ ZeusAgent is an independent derivative of
 **Nous Research and its contributors**, based on upstream commit
 `2237be355906fbe6065ce1815711eee52b2d646e` (0.21.1). It is not an official Nous Research release.
 
-The fork adds its own visual identity and namespace, isolated ZeusAgent state,
-source setup and launch tools, and changes to goal decisions, task migration,
-retry handling, and Windows behavior. Core agent capabilities build on Hermes.
+The fork adds content-bound verification receipts, baseline comparisons,
+workspace-bound goal delivery, an engineering workflow, a Hermes migration
+workspace, its own visual identity
+and namespace, isolated ZeusAgent state, source setup and launch tools, and
+changes to command routing, retry handling, and Windows behavior. Core agent
+capabilities build on Hermes.
 
 This repository currently provides source builds, without signed installers or
-a configured ZeusAgent release/update service. Existing Hermes data and external
-plugins are not automatically migrated to the ZeusAgent namespace.
+a configured ZeusAgent release/update service. Migration is an explicit action
+in Settings; importing history does not reconnect accounts or resume old jobs.
 
 The original **MIT license** and copyright notice are preserved in
 [LICENSE](LICENSE); fork provenance and attribution are recorded in

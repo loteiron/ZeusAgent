@@ -158,6 +158,36 @@ def _save_heartbeat(key, **overrides):
 
 
 class TestStructuredRead:
+    def test_gate_evidence_tracks_real_workspace_changes(self, server, session, tmp_path):
+        import subprocess
+        from zeus_cli.goals import GoalManager
+
+        sid, key, entry = session
+        workspace = tmp_path / "source"
+        workspace.mkdir()
+        subprocess.run(["git", "init", str(workspace)], check=True, capture_output=True)
+        source = workspace / "value.txt"
+        source.write_text("checked", encoding="utf-8")
+        entry["cwd"] = str(workspace)
+        manager = GoalManager(key, workspace=str(workspace))
+        manager.set("deliver checked source")
+        manager.add_gate("echo verified output")
+        with patch("zeus_cli.goals.judge_goal", return_value=("continue", "working", False, None, False)):
+            manager.evaluate_after_turn("checking")
+        before = _control(server, sid)
+        gate = before["goal"]["gates"][0]
+        assert gate["freshness"] == "current"
+        assert gate["last_exit_code"] == 0
+        assert "verified output" in gate["last_output_tail"]
+        assert gate["cwd"] == str(workspace)
+        assert gate["completed_at"] >= gate["started_at"] > 0
+        assert before == _control(server, sid)
+        source.write_text("edited since check", encoding="utf-8")
+        after = _control(server, sid)
+        assert after["goal"]["gates"][0]["freshness"] == "stale"
+        assert after["revision"] != before["revision"]
+        assert after["goal"]["gates"][0]["completed_at"] == gate["completed_at"]
+
     def test_methods_are_registered_and_empty_snapshot_is_stable(self, server, session):
         sid, _, _ = session
         assert {"session.control.read", "session.control"} <= set(server._methods)
@@ -187,7 +217,7 @@ class TestStructuredRead:
                 max_retries=2,
                 attempts=1,
                 last_exit_code=1,
-                last_output_tail="private output must stay private",
+                last_output_tail="FAILED: expected completed work",
                 last_failed_fingerprint="secret-fingerprint",
             )],
         )
@@ -196,16 +226,18 @@ class TestStructuredRead:
         assert goal["title"] == "Finish the desktop control card"
         assert goal["contract"] == contract.to_dict()
         assert goal["subgoals"] == ["Keep command routing narrow", "Document event hydration seam"]
-        assert goal["gates"] == [{
-            "command": "scripts/run_tests.sh tests/tui_gateway/test_session_control.py",
-            "timeout_seconds": 90,
-            "max_retries": 2,
-            "attempts": 1,
-            "last_exit_code": 1,
-        }]
+        gate = goal["gates"][0]
+        assert gate["command"] == "scripts/run_tests.sh tests/tui_gateway/test_session_control.py"
+        assert gate["timeout_seconds"] == 90
+        assert gate["max_retries"] == 2
+        assert gate["attempts"] == 1
+        assert gate["last_exit_code"] == 1
+        assert gate["last_output_tail"] == "FAILED: expected completed work"
+        assert gate["freshness"] == "unknown"
+        assert gate["completed_at"] == 0
         serialized = json.dumps(goal)
         for forbidden in (
-            "last_output_tail", "last_failed_fingerprint", "private output", "secret-fingerprint",
+            "last_failed_fingerprint", "secret-fingerprint",
             "route", "session_id", "credential", "api_key",
         ):
             assert forbidden not in serialized

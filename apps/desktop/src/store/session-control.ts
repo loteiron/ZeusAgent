@@ -20,6 +20,15 @@ export interface SessionControlGoalContract {
 }
 
 export interface SessionControlGate {
+  last_output_tail?: string
+  cwd?: string
+  started_at?: number
+  completed_at?: number
+  duration_ms?: number
+  fingerprint_before?: string
+  fingerprint_after?: string
+  freshness?: 'current' | 'stale' | 'unknown' | 'not_run'
+  freshness_reason?: string
   attempts: number
   command: string
   last_exit_code: number | null
@@ -33,6 +42,7 @@ export type SessionControlWaitBarrier =
   | { reason: string; target: number; type: 'pid' }
 
 export interface SessionControlGoal {
+  workspace?: string
   contract: SessionControlGoalContract
   gates: SessionControlGate[]
   last_reason?: string
@@ -198,9 +208,16 @@ function parseGoalContract(value: unknown): SessionControlGoalContract | null {
 }
 
 function parseGate(value: unknown): SessionControlGate | null {
+  const optionalStrings = ['last_output_tail', 'cwd', 'fingerprint_before', 'fingerprint_after', 'freshness_reason']
+  const optionalNumbers = ['started_at', 'completed_at', 'duration_ms']
+
   if (
     !isRecord(value) ||
-    !hasExactFields(value, ['command', 'timeout_seconds', 'max_retries', 'attempts', 'last_exit_code'])
+    !hasExactFields(
+      value,
+      ['command', 'timeout_seconds', 'max_retries', 'attempts', 'last_exit_code'],
+      [...optionalStrings, ...optionalNumbers, 'freshness']
+    )
   ) {
     return null
   }
@@ -215,13 +232,29 @@ function parseGate(value: unknown): SessionControlGate | null {
     return null
   }
 
-  return {
+  if (
+    !hasOptionalStrings(value, optionalStrings) ||
+    optionalNumbers.some(key => hasOwn(value, key) && !isFiniteNumber(value[key])) ||
+    (hasOwn(value, 'freshness') && !['current', 'stale', 'unknown', 'not_run'].includes(String(value.freshness)))
+  ) {
+    return null
+  }
+
+  const gate: SessionControlGate = {
     attempts: value.attempts,
     command: value.command,
     last_exit_code: value.last_exit_code,
     max_retries: value.max_retries,
     timeout_seconds: value.timeout_seconds
   }
+
+  for (const key of [...optionalStrings, ...optionalNumbers, 'freshness']) {
+    if (hasOwn(value, key)) {
+      Object.assign(gate, { [key]: value[key] })
+    }
+  }
+
+  return gate
 }
 
 function parseWaitBarrier(value: unknown): SessionControlWaitBarrier | null {
@@ -270,7 +303,16 @@ function parseWaitBarrier(value: unknown): SessionControlWaitBarrier | null {
 
 function parseGoal(value: unknown): SessionControlGoal | null {
   const required = ['title', 'status', 'turns_used', 'max_turns', 'contract', 'subgoals', 'gates']
-  const optional = ['created_at', 'updated_at', 'paused_reason', 'last_verdict', 'last_reason', 'wait_barrier']
+
+  const optional = [
+    'created_at',
+    'updated_at',
+    'paused_reason',
+    'last_verdict',
+    'last_reason',
+    'wait_barrier',
+    'workspace'
+  ]
 
   if (!isRecord(value) || !hasExactFields(value, required, optional)) {
     return null
@@ -285,7 +327,7 @@ function parseGoal(value: unknown): SessionControlGoal | null {
     !Array.isArray(value.subgoals) ||
     !value.subgoals.every(subgoal => typeof subgoal === 'string') ||
     !Array.isArray(value.gates) ||
-    !hasOptionalStrings(value, ['paused_reason', 'last_reason']) ||
+    !hasOptionalStrings(value, ['paused_reason', 'last_reason', 'workspace']) ||
     (hasOwn(value, 'created_at') && !isFiniteNumber(value.created_at)) ||
     (hasOwn(value, 'updated_at') && !isFiniteNumber(value.updated_at)) ||
     (hasOwn(value, 'last_verdict') &&
@@ -307,6 +349,7 @@ function parseGoal(value: unknown): SessionControlGoal | null {
 
   const goal: SessionControlGoal = {
     contract,
+    ...(typeof value.workspace === 'string' ? { workspace: value.workspace } : {}),
     gates,
     max_turns: value.max_turns,
     status: value.status as SessionControlGoalStatus,

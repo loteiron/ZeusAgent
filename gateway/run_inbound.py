@@ -497,9 +497,21 @@ class GatewayInboundMixin:
     ) -> Tuple[bool, Optional[str]]:
         """Slash-command / photo-burst handling on the busy fast-path → ``(handled, result)``. Each
         command's mid-run behavior is declared on its CommandDef (busy_policy / busy_handler)."""
-        from zeus_cli.commands import resolve_command as _resolve_cmd_inner
+        from gateway.run_busy_commands import resolve_busy_command, stale_session_control_reply
+        stale = stale_session_control_reply(self, event, _quick_key)
+        if stale is not None:
+            return True, stale
         _evt_cmd = event.get_command()
-        _cmd_def_inner = _resolve_cmd_inner(_evt_cmd) if _evt_cmd else None
+        _cmd_def_inner = None
+        if _evt_cmd:
+            try:
+                _cmd_def_inner, _command_reply = resolve_busy_command(self, event)
+            except Exception:
+                logger.debug("Busy command lookup unavailable", exc_info=True)
+                return True, ("Command lookup is temporarily unavailable. The current task is still running; "
+                              "try /status or /stop.")
+            if _command_reply is not None:
+                return True, _command_reply
 
         if _cmd_def_inner:
             # /status and /context are intentionally pre-gate so users always see session state.
@@ -513,7 +525,7 @@ class GatewayInboundMixin:
             if _denied is not None:
                 return True, _denied
             # Any recognized slash command dispatches per its declared busy_policy (dispatch /
-            # interrupt_then_dispatch / reject). Unrecognized commands and plain text fall through.
+            # interrupt_then_dispatch / reject). Custom slash intent was resolved above.
             return True, await self._dispatch_busy_slash_command(event, _cmd_def_inner, _quick_key, source)
 
         # Telegram photo bursts arrive as near-simultaneous updates — never interrupt for a
@@ -915,6 +927,10 @@ class GatewayInboundMixin:
     ) -> Tuple[bool, Optional[str]]:
         """Dispatch built-in idle-path commands → ``(handled, result)``; prompt-rewriting commands
         mutate ``event.text`` and return ``(False, None)`` to fall through to the agent."""
+        from gateway.run_busy_commands import stale_session_control_reply
+        stale = stale_session_control_reply(self, event, _quick_key)
+        if stale is not None:
+            return True, stale
         plain_handler = (
             self._gateway_plain_command_handlers().get(canonical)
             or self._gateway_idle_command_handlers().get(canonical)
@@ -1190,6 +1206,10 @@ class GatewayInboundMixin:
             return _paused_notice
 
         _quick_key = self._session_key_for_source(source)
+        from gateway.run_busy_commands import stale_session_control_reply
+        stale = stale_session_control_reply(self, event, _quick_key)
+        if stale is not None:
+            return stale
         _reply = await self._hm_pending_reply_intercepts(event, source, _quick_key)
         if _reply is not None:
             return _reply

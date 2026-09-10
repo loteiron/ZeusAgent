@@ -184,13 +184,14 @@ def _redact_spill_file(path, total_chars, command) -> list[tuple[str, Any]]:
     return [("output_total_chars", total_chars), ("full_output_path", path), ("truncation_note", note)]
 
 
-def _verification_evidence(command, cwd, session_id, returncode, output) -> Optional[dict]:
+def _verification_evidence(command, cwd, session_id, returncode, output, before=None, *, local=True) -> Optional[dict]:
     with _quiet("verification evidence recording"):
         from agent.verification_evidence import record_terminal_result
         evidence = record_terminal_result(command=command, cwd=cwd, session_id=session_id,
-                                          exit_code=returncode, output=output)
+                                          exit_code=returncode, output=output, workspace_before=before,
+                                          workspace_after=before if not local else None)
         if evidence:
-            return {k: evidence.get(k) for k in ("status", "kind", "scope", "canonical_command")}
+            return {k: evidence.get(k) for k in ("status", "kind", "scope", "canonical_command", "freshness", "check_key")}
     return None
 
 
@@ -198,6 +199,7 @@ def finalize_foreground_result(
     *, command: str, result: dict, env: Any, env_type: str, effective_task_id: str,
     task_id: Optional[str], session_id: Optional[str], session_key: str,
     workdir: Optional[str], command_cwd: Optional[str], approval_note: Optional[str],
+    verification_before: Optional[dict] = None,
 ) -> str:
     """Turn a raw ``env.execute`` result into the tool's JSON result string."""
     from tools.terminal_tool import record_session_cwd
@@ -254,7 +256,7 @@ def finalize_foreground_result(
         *_redact_spill_file(result.get("full_output_path"), result.get("output_total_chars"), command),
         ("verification_evidence", _verification_evidence(
             command, command_cwd, session_id or task_id or effective_task_id or "default",
-            returncode, output)),
+            returncode, output, verification_before, local=env_type == "local")),
         ("approval", approval_note or None),
         ("exit_code_meaning", exit_note or None),
         ("hint", failure_hint or None),

@@ -143,9 +143,15 @@ def _status_detail(status: dict[str, Any]) -> str:
     if not evidence:
         return state
 
-    command = evidence.get("canonical_command") or evidence.get("command")
+    command = evidence.get("command") or evidence.get("canonical_command")
     summary = str(evidence.get("output_summary") or "").strip()
     parts = [state]
+    counts = status.get("summary")
+    if isinstance(counts, dict):
+        parts.append("Recorded checks: " + ", ".join(f"{counts.get(key, 0)} {key}" for key in
+                     ("passed", "failed", "stale", "unknown")))
+    if evidence.get("freshness"):
+        parts.append(f"Evidence freshness: {evidence['freshness']}")
     if command:
         parts.append(f"last command `{command}`")
     if summary:

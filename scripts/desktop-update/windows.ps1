@@ -807,7 +807,10 @@ function Get-StepProgressLogStamp {
     }
 }
 
-if (-not ("ZeusAgentUpdateJob" -as [type])) {
+function Initialize-UpdateJob {
+    # Cold Add-Type compilation can take seconds. Show the progress window
+    # before paying that cost; UI-only hand-offs never need a process job.
+    if ("ZeusAgentUpdateJob" -as [type]) { return }
     Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
@@ -1030,7 +1033,7 @@ function Step-PipeDrain($Reader, [ref]$Task, $Buffer, $Sink, [ref]$Moved) {
     return $false
 }
 
-function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$Tag) {
+function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$Tag, [int]$StartupTimeoutSeconds = 0) {
     # The window does not stream child output, so no line-pump: both pipes
     # drain asynchronously (no deadlock however chatty the child) while a small
     # DoEvents loop keeps the marquee animating through long silent
@@ -1050,6 +1053,7 @@ function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$T
     # unreliably $null under PS 5.1 even with the Handle-touch workaround.
     # CREATE_SUSPENDED closes the startup race: no updater instruction can run
     # before the process is assigned to its private job and resumed.
+    Initialize-UpdateJob
     $arguments = ($ZeusAgentArgs | ForEach-Object { '"{0}"' -f ($_ -replace '"', '\"') }) -join ' '
     # CreateProcess inherits this process's environment. Set Python's encoding
     # and buffering only for the atomic launch, then restore the hand-off host.
@@ -1085,13 +1089,20 @@ function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$T
     $abandonAt = $null
     $abandoned = $false
     $lastProgressAt = Get-Date
+    # Startup and a stalled running step are separate phases. Production keeps
+    # its existing bound for both. The executable fixture can allow a cold
+    # interpreter to start, then arm its strict 3s idle clock on real output.
+    $progressTimeoutSeconds = if ($StartupTimeoutSeconds -gt 0) { $StartupTimeoutSeconds } else { $script:StepIdleTimeoutSeconds }
     $progressLogStamp = Get-StepProgressLogStamp
     $stalled = $false
     while ($true) {
         $moved = $false
         $outDone = Step-PipeDrain $stdoutReader ([ref]$outTask) $outBuffer $outSink ([ref]$moved)
         $errDone = Step-PipeDrain $stderrReader ([ref]$errTask) $errBuffer $errSink ([ref]$moved)
-        if ($moved) { $lastProgressAt = Get-Date }
+        if ($moved) {
+            $lastProgressAt = Get-Date
+            $progressTimeoutSeconds = $script:StepIdleTimeoutSeconds
+        }
         if ($proc.HasExited) {
             if ($outDone -and $errDone) { break }
             # Clock starts at the step's exit, not at its start: a slow step is
@@ -1102,7 +1113,7 @@ function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$T
                 $abandoned = $true
                 break
             }
-        } elseif (-not $stalled -and $job -ne [IntPtr]::Zero -and ((Get-Date) - $lastProgressAt).TotalSeconds -ge $script:StepIdleTimeoutSeconds) {
+        } elseif (-not $stalled -and $job -ne [IntPtr]::Zero -and ((Get-Date) - $lastProgressAt).TotalSeconds -ge $progressTimeoutSeconds) {
             # Quiet pipes are how a healthy `zeus update` looks for 40+
             # minutes: its build output streams to logs/update.log, not the
             # child's stdout. Growth of that file is progress -- reset the
@@ -1113,6 +1124,7 @@ function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$T
             if ($currentLogStamp -ne $progressLogStamp) {
                 $progressLogStamp = $currentLogStamp
                 $lastProgressAt = Get-Date
+                $progressTimeoutSeconds = $script:StepIdleTimeoutSeconds
             } else {
                 # The child is alive but has produced no observable progress
                 # -- neither on its pipes nor in the update log -- for the
@@ -1120,7 +1132,7 @@ function Invoke-ZeusAgentStep([string]$Exe, [string[]]$ZeusAgentArgs, [string]$T
                 # retrying while a descendant still mutates the checkout,
                 # venv, or release tree can overlap two installers and
                 # corrupt the install.
-                Write-HandoffLog ("{0}!| step stalled: no stdout/stderr for {1}s and no update.log growth while pid {2} remained alive; cancelling its process tree." -f $Tag, $script:StepIdleTimeoutSeconds, $proc.Id)
+                Write-HandoffLog ("{0}!| step stalled: no stdout/stderr for {1}s and no update.log growth while pid {2} remained alive; cancelling its process tree." -f $Tag, $progressTimeoutSeconds, $proc.Id)
                 $stalled = [ZeusAgentUpdateJob]::TerminateAndWait($job, 124, 10000)
                 if (-not $stalled) {
                     Write-HandoffLog ("{0}!| process-tree cancellation could not prove quiescence; refusing the timeout retry." -f $Tag)
@@ -1286,6 +1298,9 @@ exit 5
 '@
     $stallSource = @'
 param([int]$Hold, [string]$PidFile, [string]$GrandchildPidFile)
+# Reproduce cold interpreter startup exceeding the fixture's 3s idle limit.
+# The first progress marker must arm that limit; startup has its own bound.
+Start-Sleep -Seconds 4
 [System.IO.File]::WriteAllText($PidFile, [string]$PID)
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = Join-Path $PSHOME "powershell.exe"
@@ -1313,11 +1328,14 @@ exit 3
     [System.IO.File]::WriteAllText($floodPs1, $floodSource)
     [System.IO.File]::WriteAllText($stallPs1, $stallSource)
     [System.IO.File]::WriteAllText($logStallPs1, $logStallSource)
+    # Compile the shared job helper before measuring child execution. Startup
+    # remains bounded separately; every post-progress watchdog stays strict.
+    Initialize-UpdateJob
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $res = Invoke-ZeusAgentStep $powershell @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $childPs1,
         "-Hold", [string]$hold, "-PidFile", $pidFile
-    ) "pipedrain"
+    ) "pipedrain" -StartupTimeoutSeconds 30
     $sw.Stop()
     $elapsed = [Math]::Round($sw.Elapsed.TotalSeconds, 2)
 
@@ -1335,7 +1353,7 @@ exit 3
     $flood = Invoke-ZeusAgentStep $powershell @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $floodPs1,
         "-Kb", [string]$floodKb
-    ) "pipeflood"
+    ) "pipeflood" -StartupTimeoutSeconds 30
     $floodSw.Stop()
     $floodElapsed = [Math]::Round($floodSw.Elapsed.TotalSeconds, 2)
     $floodBytes = $flood.Output.Length
@@ -1345,7 +1363,7 @@ exit 3
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $stallPs1,
         "-Hold", [string]$hold, "-PidFile", $stallPidFile,
         "-GrandchildPidFile", $stallGrandchildPidFile
-    ) "stepstall"
+    ) "stepstall" -StartupTimeoutSeconds 30
     $stallSw.Stop()
     $stallElapsed = [Math]::Round($stallSw.Elapsed.TotalSeconds, 2)
     $stallPid = 0
@@ -1371,7 +1389,7 @@ exit 3
         $logstall = Invoke-ZeusAgentStep $powershell @(
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $logStallPs1,
             "-Hold", [string]$hold, "-ProgressLog", $logStallProgress
-        ) "logstall"
+        ) "logstall" -StartupTimeoutSeconds 30
     } finally {
         $script:StepProgressLogPath = $savedProgressLogPath
     }

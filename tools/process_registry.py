@@ -352,8 +352,10 @@ class ProcessSession:
     _watch_consecutive_strikes: int = field(default=0, repr=False)
     _completion_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _finish_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _reader_thread: Optional[threading.Thread] = field(default=None, repr=False)
     _pty: Any = field(default=None, repr=False)  # ptyprocess handle (use_pty=True)
+    verification_before: Optional[dict] = field(default=None, repr=False)
 
     def append_output(self, text: str) -> None:
         """Append to the rolling output buffer under the session lock, keeping the tail."""
@@ -744,11 +746,16 @@ class ProcessRegistry(ProcessCheckpointMixin):
     @staticmethod
     def _new_session(command, task_id, owner_task_id, session_key, cwd, **extra) -> ProcessSession:
         from gateway.session_context import get_session_env
+        from tools.terminal_verification import capture_before
 
+        session_id = extra.pop("verification_session_id", None) or get_session_env("ZEUS_SESSION_ID", "")
+        if "verification_before" not in extra:
+            extra["verification_before"] = capture_before(command, cwd, session_id or owner_task_id or task_id,
+                                                           local=extra.get("pid_scope", "host") == "host")
         return ProcessSession(
             id=f"proc_{uuid.uuid4().hex[:12]}", command=command, task_id=task_id,
             owner_task_id=owner_task_id or task_id, session_key=session_key, cwd=cwd,
-            parent_session_id=get_session_env("ZEUS_SESSION_ID", ""),
+            parent_session_id=session_id,
             started_at=time.time(), **extra)
 
     @staticmethod
@@ -830,7 +837,8 @@ class ProcessRegistry(ProcessCheckpointMixin):
 
     def spawn_local(
         self, command: str, cwd: str = None, task_id: str = "", session_key: str = "",
-        env_vars: dict = None, use_pty: bool = False, owner_task_id: str = "") -> ProcessSession:
+        env_vars: dict = None, use_pty: bool = False, owner_task_id: str = "",
+        verification_session_id: Optional[str] = None) -> ProcessSession:
         """Spawn a background process locally (TERMINAL_ENV=local; other backends use
         spawn_via_env()). ``use_pty`` requests a pseudo-terminal via ptyprocess/pywinpty
         for interactive CLIs, falling back to a plain pipe when unavailable or failing."""
@@ -841,7 +849,8 @@ class ProcessRegistry(ProcessCheckpointMixin):
         from tools.terminal_tool_sudo import _rewrite_compound_background as _rewrite_bg
 
         safe_command = _rewrite_bg(command)
-        session = self._new_session(command, task_id, owner_task_id, session_key, _resolve_safe_cwd(cwd or os.getcwd()))
+        session = self._new_session(command, task_id, owner_task_id, session_key, _resolve_safe_cwd(cwd or os.getcwd()),
+                                    verification_session_id=verification_session_id)
         pty_scope_attempted = False
         if use_pty:
             try:
@@ -907,13 +916,15 @@ class ProcessRegistry(ProcessCheckpointMixin):
     def adopt_local(
         self, proc: subprocess.Popen, *, command: str, cwd: Optional[str], task_id: str = "",
         session_key: str = "", owner_task_id: str = "", output_so_far: str = "",
-        notify_on_complete: bool = True) -> ProcessSession:
+        notify_on_complete: bool = True, verification_before: Optional[dict] = None,
+        verification_session_id: Optional[str] = None) -> ProcessSession:
         """Take over a still-running foreground Popen as a tracked background session
         (yield-to-background: the user sent a message while the command was running).
         The caller has stopped its own drain thread; the registry's reader continues from
         the pipe's current position and ``output_so_far`` seeds the buffer so nothing
         already captured is lost."""
-        session = self._new_session(command, task_id, owner_task_id, session_key, cwd)
+        session = self._new_session(command, task_id, owner_task_id, session_key, cwd,
+                                    verification_before=verification_before, verification_session_id=verification_session_id)
         session.process = proc
         session.pid = proc.pid
         session.host_start_time = self._safe_host_start_time(session.pid)
@@ -925,12 +936,13 @@ class ProcessRegistry(ProcessCheckpointMixin):
 
     def spawn_via_env(
         self, env: Any, command: str, cwd: str = None, task_id: str = "", session_key: str = "",
-        timeout: int = 10, owner_task_id: str = "") -> ProcessSession:
+        timeout: int = 10, owner_task_id: str = "", verification_session_id: Optional[str] = None) -> ProcessSession:
         """Spawn a background process inside a non-local backend's sandbox.
         The command is wrapped to capture its in-sandbox PID and redirect output to a
         log file that later execute() calls poll. No live pipe or stdin, but it runs in
         the correct sandbox context."""
-        session = self._new_session(command, task_id, owner_task_id, session_key, cwd, env_ref=env, pid_scope="sandbox")
+        session = self._new_session(command, task_id, owner_task_id, session_key, cwd, env_ref=env, pid_scope="sandbox",
+                                    verification_session_id=verification_session_id)
         temp_dir = self._env_temp_dir(env)
         log_path, pid_path, exit_path = (f"{temp_dir}/zeus_bg_{session.id}.{ext}" for ext in ("log", "pid", "exit"))
         q = shlex.quote
@@ -1181,15 +1193,25 @@ class ProcessRegistry(ProcessCheckpointMixin):
         self._move_to_finished(session)
 
     def _move_to_finished(self, session: ProcessSession):
+        # Content capture can take seconds. Serialize this session's completion
+        # without blocking status, stop, or output for every other process.
+        with session._finish_lock:
+            self._move_to_finished_once(session)
+
+    def _move_to_finished_once(self, session: ProcessSession):
         """Move a session from running to finished.
         Idempotent: kill_process() and the reader thread can both call this; only
         the FIRST move enqueues the completion notification, so no duplicates."""
         with self._lock:
             was_running = session.id in self._running
+        if was_running:
+            from tools.terminal_verification import record_process_completion
+            record_process_completion(session)
+            # Keep the session tracked until its result is durable. A finite
+            # parent must not observe completion and exit during this write.
+            save_completed_result(session)
+        with self._lock:
             if was_running:
-                # Keep the session tracked until its result is durable. A finite
-                # parent must not observe completion and exit during this write.
-                save_completed_result(session)
                 self._running.pop(session.id)
             self._finished[session.id] = session
         self._write_checkpoint()

@@ -62,7 +62,9 @@ def _make_wal_db(path: Path) -> None:
     # connection exists, and the ro holder cannot checkpoint at all.
     # The committed row therefore lives only in the -wal file.
     holder = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    holder.execute("SELECT 1").fetchone()
+    # Read a real page so SQLite actually opens the pager/WAL. SELECT 1 is
+    # constant-folded and leaves no reader for the writer's close to observe.
+    assert holder.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0
     conn.execute("INSERT INTO t VALUES (42)")
     conn.commit()
     conn.close()

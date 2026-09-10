@@ -1,5 +1,27 @@
 import { configure } from '@testing-library/react'
 
+// jsdom has no media-query evaluator. Supply the browser API for components
+// that subscribe to reduced motion or appearance; query-specific tests can
+// override it. EventTarget preserves normal listener/dispatch semantics.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => {
+      const target = new EventTarget()
+
+      return Object.assign(target, {
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: (listener: EventListener) => target.addEventListener('change', listener),
+        removeListener: (listener: EventListener) => target.removeEventListener('change', listener)
+      }) as MediaQueryList
+    }
+  })
+}
+
 // Node 26 defines its own `localStorage` accessor on the global object, which
 // returns `undefined` unless the process was started with --localstorage-file
 // (it warns: "localStorage is not available because --localstorage-file was
@@ -9,6 +31,7 @@ import { configure } from '@testing-library/react'
 // Storage when the global resolves to nothing, before any test module reads it.
 if (typeof (globalThis as any).localStorage === 'undefined') {
   const store = new Map<string, string>()
+
   const storage: Storage = {
     get length() {
       return store.size
@@ -17,13 +40,14 @@ if (typeof (globalThis as any).localStorage === 'undefined') {
     getItem: (k: string) => store.get(String(k)) ?? null,
     setItem: (k: string, v: string) => void store.set(String(k), String(v)),
     removeItem: (k: string) => void store.delete(String(k)),
-    clear: () => store.clear(),
+    clear: () => store.clear()
   }
+
   for (const target of [globalThis, (globalThis as any).window].filter(Boolean)) {
     Object.defineProperty(target, 'localStorage', {
       value: storage,
       configurable: true,
-      writable: true,
+      writable: true
     })
   }
 }

@@ -676,7 +676,7 @@ def _cmd_goal(rid, params, session, name, arg):
             max_turns = int((_load_cfg().get("goals") or {}).get("max_turns", 20) or 20)
         except Exception:
             max_turns = 20
-        mgr = goals.GoalManager(session_id=sid_key, default_max_turns=max_turns)
+        mgr = goals.GoalManager(session_id=sid_key, default_max_turns=max_turns, workspace=_session_cwd(session))
         from zeus_cli.goal_command import dispatch_goal_command
         result = dispatch_goal_command(
             mgr, arg, authorize_gate=lambda: None,

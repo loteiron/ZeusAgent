@@ -348,11 +348,11 @@ class TestReadmeNoLongerSaysWindowsUnsupported:
             "install copy to reflect the PowerShell installer."
         )
 
-    def test_readme_mentions_powershell_installer(self):
+    def test_readme_mentions_source_setup(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / "README.md").read_text(encoding="utf-8")
-        assert "install.ps1" in source, (
-            "README.md must point at scripts/install.ps1 for Windows users"
+        assert "scripts/setup_zeus.py" in source, (
+            "README.md must point at this fork's source setup for Windows users"
         )
 
 
@@ -933,6 +933,7 @@ class TestWindowlessGatewayRestartSpec:
     hidden-console respawn spec (normalized interpreter + stable cwd + env
     overlay)."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX no-op; native Windows behavior is tested below")
     def test_noop_on_non_windows(self):
         import zeus_cli.gateway_windows as gw
 

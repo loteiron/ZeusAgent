@@ -47,7 +47,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24.19.0'
-      - name: Install locked test dependencies
+      - name: Install search test runtime
+        # The content-search contracts exercise ripgrep, including its multiline
+        # and zero-match probes; grep fallback is a different capability.
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+      - name: Install locked Python test dependencies
         run: >-
           uv sync --locked --python 3.12 --extra all --extra dev
           --extra anthropic --extra mistral --extra fal --extra modal
@@ -119,6 +123,21 @@ jobs:
           bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0 "${selected[@]}" -- -m "$marker and not integration" --tb=short -ra | tee os-tests.log
           # Per-file deselection is valid; an entirely empty OS lane is not.
           uv run --no-sync python -c 'import pathlib,re; text=pathlib.Path("os-tests.log").read_text(encoding="utf-8"); assert re.search(r"=== Summary: \d+ files, [1-9]\d* tests passed", text), "OS lane executed no passing tests"'
+      - name: Run engineering, migration and conversation-control contracts
+        run: >-
+          bash scripts/run_tests.sh -j 2 --file-timeout 300 --file-retries 0
+          tests/agent/test_workspace_identity.py tests/agent/test_verification_revision.py
+          tests/agent/test_verification_stop.py tests/tools/test_process_verification_completion_lock.py
+          tests/verify/test_environment_and_runner.py tests/verify/test_ledger_and_nudge_integration.py
+          tests/verify/test_runner_cancellation.py
+          tests/verify/test_evidence_commands.py tests/tui_gateway/test_verification_controls.py
+          tests/zeus_cli/test_goal_workspace_evidence.py tests/zeus_cli/test_goal_workspace_safety.py
+          tests/zeus_cli/test_goal_control_races.py
+          tests/zeus_cli/test_hermes_import.py tests/zeus_cli/test_hermes_import_concurrency.py
+          tests/tui_gateway/test_hermes_migration.py
+          tests/gateway/test_telegram_command_integrity.py tests/gateway/test_telegram_session_controls.py
+          tests/tools/test_terminal_cwd_echo.py tests/skills/test_zeus_engineering_skill.py
+          tests/state/test_fts_runtime_rebuild.py tests/state/test_fts_constructor_recovery.py -- --tb=short -ra
       - name: Retain results even on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -201,3 +220,26 @@ jobs:
         run: npm run test:ui --workspace apps/desktop -- --maxWorkers=2
       - name: Test Electron contracts with a real display server
         run: xvfb-run -a npm run test:desktop:platforms --workspace apps/desktop -- --maxWorkers=2
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.11.33'
+          enable-cache: false
+      - name: Install the real desktop acceptance backend
+        run: uv sync --locked --python 3.12 --extra all --extra dev --extra messaging
+      - name: Exercise evidence and Hermes migration in Electron
+        working-directory: apps/desktop
+        env:
+          ZEUS_DESKTOP_PYTHON: ${{ github.workspace }}/.venv/bin/python
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+          UV_PYTHON: '3.12'
+        run: >-
+          xvfb-run -a npx playwright test
+          e2e/engineering-evidence.spec.ts e2e/hermes-migration.spec.ts
+          --workers=1 --retries=0 --reporter=list
+      - name: Retain desktop acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-acceptance-results
+          path: apps/desktop/test-results
+          retention-days: 14

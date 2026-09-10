@@ -67,15 +67,25 @@ async def test_gateway_goal_uses_goals_max_turns_from_full_config(tmp_path, monk
     runner = _make_runner()
 
     event = _make_goal_event()
-
-    response = await GatewayRunner._handle_goal_command(runner, event)
+    from tools.terminal_scope import reset_terminal_scope, set_terminal_scope
+    from tools.terminal_tool import clear_session_cwd, record_session_cwd
+    own_workspace = tmp_path / "session-workspace"
+    own_workspace.mkdir()
+    other_workspace = tmp_path / "other-session-workspace"
+    other_workspace.mkdir()
+    record_session_cwd("sid-gateway-goal-config", str(own_workspace))
+    scope = set_terminal_scope({"TERMINAL_ENV": "local", "TERMINAL_CWD": str(other_workspace)})
 
     try:
+        response = await GatewayRunner._handle_goal_command(runner, event)
         assert "⊙ Goal set (7-turn budget): ship the benchmark" in response
         state = goals.GoalManager("sid-gateway-goal-config").state
         assert state is not None
         assert state.max_turns == 7
+        assert state.workspace == str(own_workspace.resolve())
     finally:
+        reset_terminal_scope(scope)
+        clear_session_cwd("sid-gateway-goal-config")
         goals._DB_CACHE.clear()
 
 

@@ -45,10 +45,16 @@ _MANAGER_ACTIONS = frozenset({
 _VALID_ACTIONS = frozenset(_ACTION_COMMAND_MAP) | _MANAGER_ACTIONS
 
 
-def _safe_goal_snapshot(state) -> dict | None:
+def _safe_goal_snapshot(state, workspace: str | None = None, *, terminal_backend: str = "local") -> dict | None:
     """Return only stable, frontend-safe GoalState fields."""
     if state is None or state.status == "cleared":
         return None
+    from zeus_cli.goal_evidence import gate_snapshot
+    from zeus_cli.goals import workspace_fingerprint
+
+    current_workspace = state.workspace if workspace is None else workspace
+    fingerprint = (workspace_fingerprint(current_workspace)
+                   if terminal_backend == "local" and current_workspace and any(g.completed_at for g in state.gates) else "")
     snapshot = {
         "title": state.goal,
         "status": state.status,
@@ -56,16 +62,8 @@ def _safe_goal_snapshot(state) -> dict | None:
         "max_turns": state.max_turns,
         "contract": state.contract.to_dict(),
         "subgoals": list(state.subgoals),
-        "gates": [
-            {
-                "command": gate.command,
-                "timeout_seconds": gate.timeout_seconds,
-                "max_retries": gate.max_retries,
-                "attempts": gate.attempts,
-                "last_exit_code": gate.last_exit_code,
-            }
-            for gate in state.gates
-        ],
+        "workspace": state.workspace,
+        "gates": [gate_snapshot(gate, current_workspace, fingerprint) for gate in state.gates],
     }
     if state.created_at:
         snapshot["created_at"] = state.created_at
@@ -135,7 +133,7 @@ def _safe_heartbeat_snapshot(state) -> dict | None:
     }
 
 
-def _snapshot_control(session_key: str) -> dict:
+def _snapshot_control(session_key: str, *, workspace: str | None = None) -> dict:
     """Serialize persisted session-control state once, without wall-clock churn."""
     goal_state = _load_goal_state(session_key)
     loop_state = _load_loop_state(session_key)
@@ -147,7 +145,9 @@ def _snapshot_control(session_key: str) -> dict:
         and goal_state.status == "active"
         and _goal_blocks_loop_tick(session_key)
     )
-    goal = _safe_goal_snapshot(goal_state)
+    from zeus_cli.goal_workspace import goal_terminal_backend
+    backend = goal_terminal_backend(session_key) if goal_state and goal_state.gates else "local"
+    goal = _safe_goal_snapshot(goal_state, workspace, terminal_backend=backend)
     loop = _safe_loop_snapshot(loop_state, deferred_by_goal=deferred_by_goal)
     heartbeat = _safe_heartbeat_snapshot(heartbeat_state)
     return {
@@ -182,6 +182,8 @@ def _snapshot_updated_at(goal_state, loop_state, heartbeat_state):
     ):
         if state is not None:
             candidates.extend(value for field in fields if (value := getattr(state, field, 0)))
+    if goal_state is not None:
+        candidates.extend(gate.completed_at for gate in goal_state.gates if gate.completed_at)
     return max(candidates) if candidates else 0
 
 
@@ -223,7 +225,7 @@ def _publish_session_control_snapshot(sid: str, session: dict | None, *, only_if
         return
     try:
         with _session_profile_runtime_scope(session):
-            control = _snapshot_control(session_key)
+            control = _snapshot_control(session_key, workspace=_session_cwd(session))
         if only_if_present and not control["revision"]:
             return
         _emit("session.control.update", sid, {"control": control})
@@ -242,7 +244,7 @@ def _(rid, params: dict) -> dict:
     if not session_key:
         return _err(rid, 4001, "session has no stored key")
     try:
-        return _ok(rid, {"control": _snapshot_control(session_key)})
+        return _ok(rid, {"control": _snapshot_control(session_key, workspace=_session_cwd(session))})
     except Exception as exc:
         logger.debug("session.control.read failed: %s", exc, exc_info=True)
         return _err(rid, 5031, f"session.control.read failed: {exc}")
@@ -290,7 +292,7 @@ def _(rid, params: dict) -> dict:
         return action_result
 
     try:
-        control = _snapshot_control(session_key)
+        control = _snapshot_control(session_key, workspace=_session_cwd(session))
     except Exception as exc:
         logger.debug("session.control snapshot after %s failed: %s", action, exc, exc_info=True)
         return _err(rid, 5031, f"session.control snapshot failed: {exc}")

@@ -26,6 +26,15 @@ def build_verify_parser(subparsers, *, cmd_verify: Callable) -> None:
             "background -> poll readiness -> teardown.")
     verify_parser.add_argument(
         "path", nargs="?", default=None, help="Project root to verify (default: current directory)")
+    evidence_actions = verify_parser.add_mutually_exclusive_group()
+    evidence_actions.add_argument("--status", action="store_true",
+        help="Read current check results without executing commands (exit 0 only when passed)")
+    evidence_actions.add_argument("--capture-baseline", action="store_true",
+        help="Save current check outcomes for later regression comparisons")
+    evidence_actions.add_argument("--clear-baseline", action="store_true",
+        help="Remove the saved comparison baseline; retain all check results")
+    verify_parser.add_argument("--session", default=None,
+        help="Evidence session (default: active ZEUS_SESSION_ID, or default)")
     verify_parser.add_argument(
         "--detect-only", action="store_true",
         help="Only detect and print the recipe as JSON; run nothing")

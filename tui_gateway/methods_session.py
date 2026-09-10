@@ -427,20 +427,6 @@ def _(rid, params: dict) -> dict:
         return _ok(rid, {"facts": None})
 
 
-@method("verification.status")
-@_profile_scoped
-def _(rid, params: dict) -> dict:
-    """Best known verification evidence for a cwd/session. Read-only: never runs checks,
-    never upgrades targeted evidence into a repository-wide guarantee."""
-    try:
-        from agent.verification_evidence import verification_status
-        return _ok(rid, {"verification": verification_status(
-            session_id=params.get("session_id") or params.get("session_key"), cwd=params.get("cwd"))})
-    except Exception:
-        logger.exception("verification.status failed")
-        return _ok(rid, {"verification": {"status": "unknown", "evidence": None}})
-
-
 # ── session.resume ───────────────────────────────────────────────────
 class _Resume:
     """Per-call ``session.resume`` state. ``owns_db``: the DEDICATED profile handle is ours

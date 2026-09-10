@@ -5,8 +5,8 @@ import { useLocation, useNavigate } from 'react-router'
 import { codiconIcon } from '@/components/ui/codicon'
 import { KbdCombo } from '@/components/ui/kbd'
 import { Tip } from '@/components/ui/tooltip'
-import { getZeusAgentConfigDefaults, getZeusAgentConfigRecord, saveZeusAgentConfig } from '@/zeus'
 import { useI18n } from '@/i18n'
+import { migrationMessages } from '@/i18n/hermes-migration'
 import { triggerHaptic } from '@/lib/haptics'
 import {
   Archive,
@@ -35,6 +35,7 @@ import { bindingsFor } from '@/store/keybinds'
 import { $localModelsEnabled } from '@/store/local-models-flag'
 import { notifyError } from '@/store/notifications'
 import { $settingsScopeProfile } from '@/store/settings-scope'
+import { getZeusAgentConfigDefaults, getZeusAgentConfigRecord, saveZeusAgentConfig } from '@/zeus'
 
 import { useRouteEnumParam } from '../hooks/use-route-enum-param'
 import { OverlayIconButton } from '../overlays/overlay-chrome'
@@ -48,6 +49,7 @@ import { BillingSettings } from './billing'
 import { ConfigSettings } from './config-settings'
 import { SECTIONS } from './constants'
 import { GatewaySettings } from './gateway-settings'
+import { HermesMigrationSettings } from './hermes-migration'
 import { KeybindSettings } from './keybind-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
@@ -69,12 +71,14 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'billing',
   'plugins',
   'sessions',
+  'hermes-migration',
   'about'
 ]
 
 export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: SettingsPageProps) {
   const scopeProfile = useStore($settingsScopeProfile)
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const migrationTitle = migrationMessages[locale ?? 'en'].title
   const navigate = useNavigate()
   const { hash, pathname, search } = useLocation()
 
@@ -296,6 +300,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
         onSelect: () => setActiveView('sessions')
       },
       {
+        active: activeView === 'hermes-migration',
+        icon: Download,
+        id: 'hermes-migration',
+        label: migrationTitle,
+        onSelect: () => setActiveView('hermes-migration')
+      },
+      {
         active: activeView === 'about',
         gapBefore: true,
         icon: Info,
@@ -304,7 +315,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
         onSelect: () => setActiveView('about')
       }
     ],
-    [activeView, keysView, providerView, t, setActiveView, openProviderView, openKeysView]
+    [activeView, keysView, providerView, t, migrationTitle, setActiveView, openProviderView, openKeysView]
   )
 
   // Type-to-search: printable keystrokes on the Settings surface (outside any
@@ -424,6 +435,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       <BillingSettings />
     ) : activeView === 'plugins' ? (
       <PluginsSettings />
+    ) : activeView === 'hermes-migration' ? (
+      <HermesMigrationSettings />
     ) : (
       <SessionsSettings />
     )

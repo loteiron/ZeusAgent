@@ -46,7 +46,10 @@ def _surface(surface, mgr, monkeypatch, prompts=None):
             return asyncio.run(runner._handle_goal_command(event))
         return execute
     from tui_gateway import server
-    server._sessions[mgr.session_id] = {'session_key': mgr.session_id}
+    server._sessions[mgr.session_id] = {
+        'session_key': mgr.session_id,
+        'cwd': mgr.state.workspace if mgr.state else os.getcwd(),
+    }
     def execute(arg):
         result = server._methods['command.dispatch'](1, {
             'session_id': mgr.session_id, 'name': 'goal', 'arg': arg})

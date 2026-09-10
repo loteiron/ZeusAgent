@@ -16331,6 +16331,9 @@ def test_model_options_preserves_canonical_custom_row_after_agent_init(monkeypat
         "zeus_cli.auth.is_provider_explicitly_configured",
         lambda _slug: False,
     )
+    # Explicit OAuth sign-ins are intentionally eligible without config/env
+    # keys. This case has no such sign-in; isolate the host's Claude login.
+    monkeypatch.setattr("zeus_cli.inventory._anthropic_oauth_credentials_present", lambda: False)
     monkeypatch.setattr("zeus_cli.inventory._apply_pricing", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("zeus_cli.inventory._apply_capabilities", lambda *_args, **_kwargs: None)
 
@@ -16967,13 +16970,15 @@ def test_session_most_recent_handles_db_unavailable(monkeypatch):
 
 
 def test_verification_status_returns_recorded_evidence(tmp_path, monkeypatch):
+    import subprocess
+    from agent.workspace_identity import capture_workspace
     profile_home = tmp_path / "profiles" / "verify"
     profile_home.mkdir(parents=True)
     monkeypatch.setattr(server, "_profile_home", lambda p: profile_home if p == "verify" else None)
     token = set_zeus_home_override(profile_home)
     project = tmp_path / "project"
     project.mkdir()
-    (project / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
     (project / "package.json").write_text(
         json.dumps({"scripts": {"test": "vitest"}}),
         encoding="utf-8",
@@ -16988,6 +16993,7 @@ def test_verification_status_returns_recorded_evidence(tmp_path, monkeypatch):
             session_id="sid",
             exit_code=0,
             output="green",
+            workspace_before=capture_workspace(project),
         )
 
         resp = server.handle_request(

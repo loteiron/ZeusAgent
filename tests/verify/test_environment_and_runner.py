@@ -3,6 +3,7 @@
 import http.server
 import json
 import subprocess
+import sys
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -102,11 +103,16 @@ class TestRunner:
         assert [p.phase for p in result.phases] == ["test"]
 
     def test_phase_timeout(self, tmp_path):
-        recipe = Recipe(name="x", test=["sleep 5"])
+        recipe = Recipe(name="x", test=["sleep 60"])
+        started = time.monotonic()
         result = run_verify(tmp_path, recipe, phase_timeout=0.3, skip_start=True)
         assert not result.ok
         assert result.phases[0].timed_out
         assert result.phases[0].exit_code is None
+        # Native Windows tree termination allows 15s for taskkill plus 5s
+        # for reaping. Stay below the child's lifetime while respecting that
+        # cleanup budget on a loaded host; the old pipe leak waits all 60s.
+        assert time.monotonic() - started < 25, "a timed-out child retained the output pipe"
 
     def test_commands_run_in_project_root(self, tmp_path):
         (tmp_path / "marker.txt").write_text("here", encoding="utf-8")
@@ -205,7 +211,7 @@ class TestReadiness:
         port = _free_port()
         recipe = Recipe(
             name="x",
-            start=f"python3 -m http.server {port} --bind 127.0.0.1",
+            start=f'"{sys.executable}" -m http.server {port} --bind 127.0.0.1',
             port=port,
         )
         result = run_verify(tmp_path, recipe, phases=("start",), ready_timeout=15)
@@ -214,6 +220,10 @@ class TestReadiness:
         assert result.readiness.status_code == 200
         assert result.readiness.url == f"http://127.0.0.1:{port}/"
         assert result.ok
+        import socket
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            assert probe.connect_ex(("127.0.0.1", port)) != 0, "verification left its HTTP server running"
 
     def test_readiness_timeout_when_nothing_listens(self, tmp_path):
         port = _free_port()

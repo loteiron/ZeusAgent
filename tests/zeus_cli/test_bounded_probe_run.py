@@ -47,6 +47,15 @@ def test_nonzero_exit_is_returned_not_swallowed():
     assert result.stdout.strip() == "partial"
 
 
+def test_binary_probe_preserves_path_delimiters_and_non_unicode_bytes():
+    result = bounded_probe_run(
+        [_PY, "-c", "import sys; sys.stdout.buffer.write(b'path\\xff\\r\\n\\x00next')"],
+        timeout=30, binary=True,
+    )
+    assert result is not None and result.returncode == 0
+    assert result.stdout == b"path\xff\r\n\x00next"
+
+
 def test_spawn_failure_returns_none():
     result = bounded_probe_run(["definitely-not-a-real-binary-87134"], timeout=5)
     assert result is None

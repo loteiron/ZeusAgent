@@ -750,6 +750,13 @@ class LocalEnvironment(BaseEnvironment):
         """Rewrite native/mixed Windows paths before quoting for Git Bash."""
         return _quote_bash_path(path)
 
+    def _snapshot_script_kwargs(self, cwd: str) -> dict:
+        options = super()._snapshot_script_kwargs(cwd)
+        # MSYS mounts such as /tmp have no reversible drive-prefix translation.
+        # Ask the executing shell for the native path while it still owns that cwd.
+        options["native_cwd"] = _IS_WINDOWS
+        return options
+
     def _recover_cwd(self) -> None:
         """Swap ``self.cwd`` for a usable directory if it vanished or is inaccessible
         (e.g. a command ``rm -rf``'d its own cwd) — otherwise Popen raises before bash
@@ -808,7 +815,7 @@ class LocalEnvironment(BaseEnvironment):
         prev_cwd = self.cwd
         super()._extract_cwd_from_output(result)
         if self.cwd != prev_cwd:
-            normalized = _msys_to_windows_path(self.cwd)
+            normalized = os.path.normpath(_msys_to_windows_path(self.cwd))
             if normalized and os.path.isdir(normalized):
                 self.cwd = normalized
                 result["cwd"] = normalized

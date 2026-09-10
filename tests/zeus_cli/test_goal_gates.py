@@ -1,6 +1,7 @@
 """Tests for /goal quality gates (GoalGate, run_gate, GoalManager gate flow)."""
 
 import json
+import subprocess
 import sys
 import time
 from unittest.mock import patch
@@ -17,6 +18,15 @@ from zeus_cli.goals import (
     save_goal,
     load_goal,
 )
+
+
+@pytest.fixture(autouse=True)
+def gate_workspace(tmp_path, monkeypatch):
+    """Gate tests verify their own workspace, never the developer's changing checkout."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", str(workspace)], check=True, capture_output=True)
+    monkeypatch.chdir(workspace)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -65,14 +75,14 @@ def test_run_gate_pass():
 
 
 def test_run_gate_fail_captures_output():
-    passed, code, out = run_gate(GoalGate(command="echo broken >&2; exit 3"))
+    passed, code, out = run_gate(GoalGate(command=f'"{sys.executable}" -c "import sys; print(\'broken\', file=sys.stderr); sys.exit(3)"'))
     assert passed is False
     assert code == 3
     assert "broken" in out
 
 
 def test_run_gate_timeout():
-    passed, code, out = run_gate(GoalGate(command="sleep 5", timeout_seconds=1))
+    passed, code, out = run_gate(GoalGate(command=f'"{sys.executable}" -c "import time; time.sleep(5)"', timeout_seconds=1))
     assert passed is False
     assert code == -1
     assert "timed out" in out
@@ -173,7 +183,7 @@ def test_failing_gate_short_circuits_judge():
 
 def test_passing_gates_fall_through_to_judge():
     mgr = _mgr_with_goal("gate-pass-sid")
-    mgr.add_gate("true")
+    mgr.add_gate("echo checked")
     with patch(
         "zeus_cli.goals.judge_goal",
         return_value=("done", "all good", False, None, False),

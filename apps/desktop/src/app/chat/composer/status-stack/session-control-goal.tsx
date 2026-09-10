@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { evidenceMessages } from '@/i18n/evidence'
 import {
   runSessionControlAction,
   type SessionControlAction,
@@ -54,7 +55,8 @@ export const SessionControlGoalSection = memo(function SessionControlGoalSection
   onSubmit,
   onFeedback
 }: GoalSectionProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const evidence = evidenceMessages[locale]
   const s = t.statusStack
   const ctrl = s.control
 
@@ -587,6 +589,15 @@ export const SessionControlGoalSection = memo(function SessionControlGoalSection
               </div>
             )}
 
+            {goal.workspace && (
+              <div className="text-xs">
+                <div className="font-semibold text-muted-foreground">{evidence.workspace}</div>
+                <code className="mt-1 block break-all" dir="ltr">
+                  {goal.workspace}
+                </code>
+              </div>
+            )}
+
             {/* Quality Gates */}
             {goal.gates.length > 0 && (
               <div>
@@ -600,6 +611,12 @@ export const SessionControlGoalSection = memo(function SessionControlGoalSection
                       key={`${i}-${gate.command}`}
                     >
                       <div className="font-mono text-[0.7rem] text-foreground/95">{gate.command}</div>
+                      <div className="mt-1 text-xs font-medium text-primary">
+                        {evidence.freshness}: {evidence[gate.freshness ?? 'unknown']}
+                      </div>
+                      {gate.freshness_reason && (
+                        <p className="mt-1 text-xs text-muted-foreground">{gate.freshness_reason}</p>
+                      )}
                       <div className="mt-1 flex items-center gap-2 text-[0.68rem] text-muted-foreground/80">
                         <span>{ctrl.gateAttempts(gate.attempts, gate.max_retries)}</span>
                         <span className="text-muted-foreground/40">·</span>
@@ -607,6 +624,30 @@ export const SessionControlGoalSection = memo(function SessionControlGoalSection
                         <span className="text-muted-foreground/40">·</span>
                         <span>{ctrl.gateLastExit(gate.last_exit_code)}</span>
                       </div>
+                      {gate.cwd && (
+                        <code className="mt-2 block break-all text-[0.65rem] text-muted-foreground" dir="ltr">
+                          {gate.cwd}
+                        </code>
+                      )}
+                      {Boolean(gate.completed_at) && (
+                        <div className="mt-1 text-[0.65rem] text-muted-foreground">
+                          {evidence.completed}: {new Date(gate.completed_at! * 1000).toLocaleString(locale)} ·{' '}
+                          {evidence.duration}: {gate.duration_ms ?? 0} ms
+                        </div>
+                      )}
+                      {gate.last_exit_code !== null && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer rounded text-xs focus-visible:outline-2 focus-visible:outline-primary">
+                            {evidence.output}
+                          </summary>
+                          <pre
+                            className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all font-mono text-[0.7rem]"
+                            dir="ltr"
+                          >
+                            {gate.last_output_tail || evidence.noOutput}
+                          </pre>
+                        </details>
+                      )}
                     </div>
                   ))}
                 </div>

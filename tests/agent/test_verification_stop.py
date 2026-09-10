@@ -1,5 +1,6 @@
 import json
 import sys
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -183,11 +184,14 @@ def test_no_suite_nudge_uses_canonical_temp_dir(tmp_path, monkeypatch):
 
 
 def test_ad_hoc_pass_satisfies_no_suite_stop_loop(tmp_path, monkeypatch):
-    monkeypatch.setenv("ZEUS_HOME", str(tmp_path / ".zeus"))
+    monkeypatch.setenv("ZEUS_HOME", str(tmp_path.parent / (tmp_path.name + "-state")))
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
     changed = str(tmp_path / "src" / "app.ts")
     script = Path(tempfile.gettempdir()) / f"zeus-ad-hoc-stop-{tmp_path.name}.py"
     script.write_text("print('ok')\n", encoding="utf-8")
+    from agent.workspace_identity import capture_workspace
     try:
         record_terminal_result(
             command=f"python {script}",
@@ -195,6 +199,7 @@ def test_ad_hoc_pass_satisfies_no_suite_stop_loop(tmp_path, monkeypatch):
             session_id="s1",
             exit_code=0,
             output="ok",
+            workspace_before=capture_workspace(tmp_path),
         )
     finally:
         script.unlink(missing_ok=True)

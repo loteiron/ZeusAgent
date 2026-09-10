@@ -8,6 +8,7 @@ diagnostics after directory changes.
 
 import json
 import os
+import shlex
 import tempfile
 
 import pytest
@@ -22,10 +23,24 @@ def isolated_home(tmp_path, monkeypatch):
 
 
 class TestCwdEcho:
+    @pytest.mark.windows_only
+    def test_native_cd_observation_survives_msys_normalization(self, tmp_path):
+        from tools.environments.local import LocalEnvironment
+
+        target = tmp_path / "Türkçe project"
+        target.mkdir()
+        environment = LocalEnvironment(cwd=str(tmp_path))
+        try:
+            result = environment.execute(f"cd {shlex.quote(target.as_posix())} && pwd -W")
+            assert result.get("cwd_observed") is True
+            assert os.path.realpath(result["cwd"]) == os.path.realpath(str(target))
+        finally:
+            environment.cleanup()
+
     def test_cd_reports_new_cwd(self, isolated_home, tmp_path):
         target = tmp_path / "projdir"
         target.mkdir()
-        r = json.loads(terminal_tool(f"cd {target}", task_id="t-cwd-1"))
+        r = json.loads(terminal_tool(f"cd {shlex.quote(target.as_posix())}", task_id="t-cwd-1"))
         assert r["exit_code"] == 0
         assert "cwd" in r
         assert os.path.realpath(r["cwd"]) == os.path.realpath(str(target))
@@ -38,10 +53,10 @@ class TestCwdEcho:
     def test_cwd_persists_and_stops_reporting_when_stable(self, isolated_home, tmp_path):
         target = tmp_path / "stable"
         target.mkdir()
-        r1 = json.loads(terminal_tool(f"cd {target}", task_id="t-cwd-3"))
+        r1 = json.loads(terminal_tool(f"cd {shlex.quote(target.as_posix())}", task_id="t-cwd-3"))
         assert "cwd" in r1
         # Next command runs IN the new cwd without changing it: no echo.
-        r2 = json.loads(terminal_tool("pwd", task_id="t-cwd-3"))
+        r2 = json.loads(terminal_tool("pwd -W" if os.name == "nt" else "pwd", task_id="t-cwd-3"))
         assert "cwd" not in r2
         assert os.path.realpath(r2["output"].strip()) == os.path.realpath(str(target))
 
@@ -49,7 +64,7 @@ class TestCwdEcho:
         a = tmp_path / "a"
         b = tmp_path / "b"
         a.mkdir(); b.mkdir()
-        r = json.loads(terminal_tool(f"cd {a} && cd {b} && echo done", task_id="t-cwd-4"))
+        r = json.loads(terminal_tool(f"cd {shlex.quote(a.as_posix())} && cd {shlex.quote(b.as_posix())} && echo done", task_id="t-cwd-4"))
         assert r["exit_code"] == 0
         assert os.path.realpath(r.get("cwd", "")) == os.path.realpath(str(b))
 

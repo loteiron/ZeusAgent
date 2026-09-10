@@ -3769,6 +3769,14 @@ class TelegramAdapter(BasePlatformAdapter):
         """2-per-row layout keeps labels readable on mobile (a 4-button row truncates)."""
         return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
 
+    async def send_session_controls(self, runner, event, entry, text: str) -> SendResult:
+        from plugins.platforms.telegram.session_controls import send_controls
+        return await send_controls(self, runner, event, entry, text)
+
+    async def _handle_session_control(self, query, data: str, cb: Dict[str, Any]) -> None:
+        from plugins.platforms.telegram.session_controls import handle_control
+        await handle_control(self, query, data, cb)
+
     async def send_update_prompt(
         self, chat_id: str, prompt: str, default: str = "", session_key: str = "", metadata: Optional[Dict[str, Any]] = None) -> SendResult:
         """Send an inline-keyboard Yes/No prompt for the gateway ``/update`` watcher."""
@@ -4254,6 +4262,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     await handler(query, data, chat_id)
                 return
         for prefix, handler in (
+            ("zc:", self._handle_session_control),
             ("gt:", self._handle_gmail_triage_callback), ("ea:", self._handle_exec_approval_callback),
             ("sc:", self._handle_slash_confirm_callback), ("cl:", self._handle_clarify_callback),
             ("update_prompt:", self._handle_update_prompt_callback)):
@@ -5614,6 +5623,12 @@ class TelegramAdapter(BasePlatformAdapter):
         # addressed to some other bot.
         self._observe_bot_identity_from_message(message)
         if self._is_own_message(message):
+            return False
+        token = (getattr(message, "text", None) or "").lstrip().split(maxsplit=1)
+        addressed = re.fullmatch(r"/[A-Za-z0-9_-]+@([A-Za-z0-9_]+)", token[0]) if token else None
+        # Telegram's generic COMMAND filter also delivers /cmd@other_bot. Leading
+        # whitespace uses its TEXT filter, but the shared gateway parser accepts it.
+        if addressed and addressed.group(1).lower() != self._current_bot_username():
             return False
         if not self._is_group_chat(message):
             return True

@@ -405,7 +405,8 @@ def _legacy_kill_process_tree(proc: "subprocess.Popen") -> None:
 def bounded_probe_run(
     argv: Sequence[str], *, timeout: float, errors: str = "replace",
     env: "Mapping[str, str] | None" = None,
-) -> "subprocess.CompletedProcess[str] | None":
+    binary: bool = False,
+) -> "subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes] | None":
     """Deadlock-safe ``subprocess.run(argv, capture_output=True, timeout=…)`` for fail-open probes.
 
     Returns a ``CompletedProcess`` when the child finished within *timeout* (any exit code), or
@@ -422,7 +423,7 @@ def bounded_probe_run(
     try:
         proc = subprocess.Popen(
             list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-            text=True, encoding="utf-8", errors=errors,
+            **({} if binary else {"text": True, "encoding": "utf-8", "errors": errors}),
             env=dict(env) if env is not None else None, **_popen_kwargs)
     except Exception:
         return None
@@ -470,4 +471,3 @@ def bounded_git_probe(argv: Sequence[str], *, timeout: float) -> str:
     if result is None or result.returncode != 0:
         return ""
     return (result.stdout or "").strip()
-

@@ -1,6 +1,6 @@
 """Regression tests for local terminal initial cwd normalization."""
 
-from pathlib import Path
+import os
 
 from tools.environments.local import LocalEnvironment, _resolve_local_initial_cwd
 
@@ -20,9 +20,9 @@ def test_local_environment_keeps_existing_relative_child_cwd(tmp_path, monkeypat
 
     env = LocalEnvironment(cwd="zeus-agent", timeout=5)
     try:
-        result = env.execute("pwd", timeout=5)
+        result = env.execute("pwd -W" if os.name == "nt" else "pwd", timeout=5)
     finally:
         env.cleanup()
 
     assert result["returncode"] == 0
-    assert result["output"].strip() == str(project)
+    assert os.path.realpath(result["output"].strip()) == os.path.realpath(project)

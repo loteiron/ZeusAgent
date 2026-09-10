@@ -56,6 +56,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_PS1 = REPO_ROOT / "scripts" / "desktop-update" / "windows.ps1"
 
 
+def _failure_output(output: str) -> str:
+    """Keep the fixture diagnosis without echoing its eight-megabyte flood."""
+    lines = output.splitlines()
+    return "\n".join(line[:600] for line in lines[-40:])
+
+
 class TestIdleWatchdogCountsUpdateLogGrowth:
     """The idle watchdog must count logs/update.log growth as progress.
 
@@ -206,10 +212,10 @@ def test_update_step_survives_pipe_leak_flood_and_live_child_stall(
         "The Windows update hand-off's step drain regressed: it either waited "
         "on a descendant holding the pipe open (the Desktop parks on 'Updating "
         "ZeusAgent' forever) or metered a chatty step (backpressure on the running "
-        f"update). Fixture diagnosis follows.\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
+        f"update). Fixture diagnosis follows.\n--- stdout ---\n{_failure_output(result.stdout)}\n"
+        f"--- stderr ---\n{_failure_output(result.stderr)}"
     )
     assert result.returncode == 0, (
         f"-SelfTestPipeDrain exited {result.returncode}.\n"
-        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+        f"--- stdout ---\n{_failure_output(result.stdout)}\n--- stderr ---\n{_failure_output(result.stderr)}"
     )

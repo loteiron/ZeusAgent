@@ -1319,6 +1319,7 @@ export function ChatBar({
                   )}
                 />
                 <CodingStatusRow
+                  gateway={gateway}
                   onBranchOff={handleBranchOff}
                   onConvertBranch={handleConvertBranch}
                   onListBranches={handleListBranches}
@@ -1332,6 +1333,8 @@ export function ChatBar({
                   // and stops probing git / GitHub for a surface that has no
                   // branch to show. Cheaper than a second composer.
                   repoPath={botChat ? undefined : cwd}
+                  requirePrimaryOwnership={scope.target === 'main'}
+                  sessionId={sessionId}
                 />
                 <div
                   className={cn(

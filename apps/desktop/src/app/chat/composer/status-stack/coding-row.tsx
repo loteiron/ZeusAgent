@@ -20,11 +20,17 @@ import { displayPath } from '@/lib/display-path'
 import { openWorktreeDialog, registerRepoStatusCwd, repoStatusForCwd, repoWorktreesForCwd } from '@/store/coding-status'
 import { notifyError } from '@/store/notifications'
 import { $pullRequestsByBranch, branchPrKey, refreshPullRequests } from '@/store/pull-requests'
+import type { ZeusAgentGateway } from '@/zeus'
+
+import { EvidenceButton } from '../evidence'
 
 // Tiny uppercase section header, matching the composer "+" menu's labels.
 const MENU_SECTION = 'text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)'
 
 interface CodingStatusRowProps {
+  sessionId?: null | string
+  gateway?: ZeusAgentGateway | null
+  requirePrimaryOwnership?: boolean
   /** Branch the current draft off into a fresh worktree + session, based on
    *  `base` (a branch name; omitted = current HEAD). The composer owns the
    *  draft, so it supplies the orchestration; the row just collects the new
@@ -53,6 +59,9 @@ interface CodingStatusRowProps {
  * local git repo (the probe returns null).
  */
 export const CodingStatusRow = memo(function CodingStatusRow({
+  sessionId,
+  gateway,
+  requirePrimaryOwnership,
   onBranchOff,
   onConvertBranch,
   onListBranches,
@@ -287,6 +296,15 @@ export const CodingStatusRow = memo(function CodingStatusRow({
               </ActionsMenu>
             )}
           </div>
+
+          {sessionId && resolvedRepoPath && (
+            <EvidenceButton
+              cwd={resolvedRepoPath}
+              gateway={gateway ?? null}
+              requirePrimaryOwnership={requirePrimaryOwnership}
+              sessionId={sessionId}
+            />
+          )}
 
           {/* The counts describe what's in the review pane, so clicking them
               opens it. `contents` again: the two spans stay direct flex children

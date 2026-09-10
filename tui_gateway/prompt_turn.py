@@ -36,7 +36,8 @@ def _active_goal_manager(session: dict):
     except Exception:
         max_turns = 20
     goal_mgr = GoalManager(
-        session_id=str(session.get("session_key") or ""), default_max_turns=max_turns)
+        session_id=str(session.get("session_key") or ""), default_max_turns=max_turns,
+        workspace=_session_cwd(session))
     return goal_mgr if goal_mgr.is_active() else None
 
 

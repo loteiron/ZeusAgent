@@ -457,7 +457,11 @@ async def test_profile_command_reports_source_stamped_profile(monkeypatch, tmp_p
     result = await runner._handle_profile_command(event)
 
     assert "**Profile:** `milo`" in result
-    assert f"**Home:** `{profile_home}`" in result
+    from pathlib import Path
+    displayed_home = result.split("**Home:** `", 1)[1].split("`", 1)[0]
+    # Windows TEMP lives under the user's home, so the presentation contracts
+    # that path to ~ while typical Linux TEMP paths stay absolute.
+    assert Path(displayed_home).expanduser().resolve() == profile_home.resolve()
 
 
 # ── /context command tests ────────────────────────────────────────────────

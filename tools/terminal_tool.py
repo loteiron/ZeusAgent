@@ -1072,20 +1072,29 @@ def _run_foreground(
         clear_current_thread_interrupt()
 
     for retry_count in range(max_retries + 1):
+        verification_before = None
+        command_cwd = None
         try:
             command_cwd = _resolve_command_cwd(
                 workdir=workdir, default_cwd=plan.cwd, session_key=session_key, env_type=env_type,
             )
+            from tools.terminal_verification import capture_before
+            verification_before = capture_before(command, command_cwd, session_id or task_id or eff,
+                                                  local=env_type == "local")
             # bounded_capture: model-facing output keeps a head/tail window
             # while streaming so a verbose command can't OOM the gateway;
             # internal env.execute() consumers stay unbounded.
             result = env.execute(
                 command, timeout=effective_timeout, cwd=command_cwd, bounded_capture=True,
                 **_yield_kwargs(command, env_type=env_type, cwd=command_cwd, effective_task_id=eff,
-                                task_id=task_id, session_key=session_key),
+                                task_id=task_id, session_key=session_key,
+                                verification_before=verification_before, verification_session_id=session_id),
             )
             break
         except Exception as e:
+            from tools.terminal_verification import record_execution_failure
+            record_execution_failure(command, command_cwd, session_id or task_id or eff,
+                                     verification_before, str(e), local=env_type == "local")
             if "timeout" in str(e).lower():
                 return _error_json(f"Command timed out after {effective_timeout} seconds", exit_code=124)
             # Retry on transient errors
@@ -1108,7 +1117,7 @@ def _run_foreground(
     return finalize_foreground_result(
         command=command, result=result, env=env, env_type=env_type, effective_task_id=eff,
         task_id=task_id, session_id=session_id, session_key=session_key, workdir=workdir,
-        command_cwd=command_cwd, approval_note=approval_note,
+        command_cwd=command_cwd, approval_note=approval_note, verification_before=verification_before,
     )
 
 
@@ -1224,6 +1233,7 @@ def terminal_tool(
                 effective_pty=pty and not pty_disabled, notify_on_complete=notify_on_complete,
                 watch_patterns=watch_patterns, approval_note=verdict.note,
                 pty_disabled_reason=_PTY_DISABLED_REASON if pty_disabled else None,
+                verification_session_id=session_id,
             )
             if plan.promoted_from_foreground_timeout is not None:
                 result = _with_promoted_note(result, plan.promoted_from_foreground_timeout)

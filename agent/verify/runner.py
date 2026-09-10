@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -76,7 +77,8 @@ class VerifyResult:
 
     @property
     def ok(self) -> bool:
-        return all(p.ok for p in self.phases) and (self.readiness is None or self.readiness.ready)
+        return bool(self.phases or self.readiness) and all(p.ok for p in self.phases) and (
+            self.readiness is None or self.readiness.ready)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,13 +97,23 @@ def _run_phase_command(
     on_output: Callable[[str], None] | None = None,
 ) -> PhaseResult:
     started = time.monotonic()
-    try:
-        proc = subprocess.run(command, cwd=str(root), timeout=timeout, **_SUBPROCESS_KW)
-        output, exit_code, timed_out = proc.stdout or "", proc.returncode, False
-    except subprocess.TimeoutExpired as exc:
-        raw = exc.output
-        output = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else (raw or "")
-        exit_code, timed_out = None, True
+    # A file cannot leave communicate/read waiting on a grandchild's inherited
+    # pipe. It also bounds in-memory output for verbose build and test commands.
+    with tempfile.TemporaryFile() as capture:
+        proc = subprocess.Popen(command, cwd=str(root), start_new_session=True,
+                                **{**_SUBPROCESS_KW, "stdout": capture})
+        try:
+            proc.wait(timeout=timeout)
+            exit_code, timed_out = proc.returncode, False
+        except subprocess.TimeoutExpired:
+            _terminate_process_group(proc)
+            exit_code, timed_out = None, True
+        except BaseException:
+            # The child owns a separate process group and will not receive the
+            # CLI's Ctrl+C. Finish teardown before propagating cancellation.
+            _terminate_process_group(proc)
+            raise
+        output = _captured_tail(capture)
     duration = time.monotonic() - started
     if on_output and output:
         on_output(output)
@@ -125,9 +137,16 @@ def _poll_readiness(url: str, timeout: float, interval: float = 1.0) -> tuple[bo
 
 
 def _terminate_process_group(proc: subprocess.Popen) -> None:
-    """SIGTERM the app's process group (``start_new_session=True`` on POSIX; just the
-    direct child on Windows, which lacks ``os.killpg``), SIGKILL after 10s."""
+    """Terminate the owned process tree on Windows or process group on POSIX."""
     if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        from agent.deadline import kill_process_tree
+        kill_process_tree(proc.pid)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
         return
     killpg = getattr(os, "killpg", None)
     getpgid = getattr(os, "getpgid", None)
@@ -161,6 +180,13 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
+def _captured_tail(capture) -> str:
+    capture.flush()
+    capture.seek(0, os.SEEK_END)
+    capture.seek(max(0, capture.tell() - _TAIL_CHARS * 4))
+    return _tail(capture.read().decode("utf-8", errors="replace"))
+
+
 def _run_start_phase(
     recipe: Recipe, root: Path, ready_timeout: float, port_override: int | None = None
 ) -> ReadinessResult:
@@ -169,16 +195,14 @@ def _run_start_phase(
     url = f"http://127.0.0.1:{port}{recipe.readiness_path}"
     started = time.monotonic()
     # start_new_session: own process group for clean teardown.
-    proc = subprocess.Popen(recipe.start, cwd=str(root), start_new_session=True, **_SUBPROCESS_KW)
-    output = ""
-    try:
-        ready, status, error = _poll_readiness(url, ready_timeout)
-    finally:
-        _terminate_process_group(proc)
+    with tempfile.TemporaryFile() as capture:
+        proc = subprocess.Popen(recipe.start, cwd=str(root), start_new_session=True,
+                                **{**_SUBPROCESS_KW, "stdout": capture})
         try:
-            output = proc.stdout.read() or "" if proc.stdout is not None else ""
-        except (OSError, ValueError):
-            output = ""
+            ready, status, error = _poll_readiness(url, ready_timeout)
+        finally:
+            _terminate_process_group(proc)
+            output = _captured_tail(capture)
     return ReadinessResult(url, ready, status, time.monotonic() - started, error, _tail(output))
 
 

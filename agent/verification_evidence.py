@@ -4,6 +4,7 @@ completion, and never upgrades targeted checks into "repo green"."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -11,7 +12,7 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
@@ -25,7 +26,7 @@ _MAX_EVIDENCE_AGE_DAYS = 30
 _MAX_EVENTS_PER_SESSION_ROOT = 100
 _MAX_TOTAL_UNREFERENCED_EVENTS = 10_000
 _AD_HOC_SCRIPT_NAME_PREFIXES = ("zeus-verify-", "zeus-ad-hoc-")
-_VERIFY_SCHEMA_VERSION = 1
+_VERIFY_SCHEMA_VERSION = 2
 
 _INTERPRETERS = {"python", "python3", "node", "bash", "sh", "ruby", "perl"}
 _TARGET_EXTENSIONS = (".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java")
@@ -78,6 +79,16 @@ _SCHEMA_DDL = (
         CREATE INDEX IF NOT EXISTS idx_verification_events_session_root
         ON verification_events(session_id, root, id DESC)
         """,
+    """CREATE TABLE IF NOT EXISTS verification_checks (
+        session_id TEXT NOT NULL, root TEXT NOT NULL, check_key TEXT NOT NULL,
+        event_id INTEGER NOT NULL, PRIMARY KEY(session_id, root, check_key))""",
+    """CREATE TABLE IF NOT EXISTS verification_baselines (
+        session_id TEXT NOT NULL, root TEXT NOT NULL, id TEXT NOT NULL,
+        created_at TEXT NOT NULL, fingerprint TEXT NOT NULL, checks_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, root))""",
+    """CREATE TABLE IF NOT EXISTS verification_active (
+        run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, root TEXT NOT NULL,
+        check_key TEXT NOT NULL, event_json TEXT NOT NULL)""",
 )
 
 
@@ -101,6 +112,8 @@ class VerificationEvidence:
     root: str
     session_id: str
     output_summary: str = ""
+    workspace_before_json: str | None = None
+    workspace_after_json: str | None = None
 
 
 def _utc_now() -> str:
@@ -151,6 +164,15 @@ def _transaction() -> Iterator[sqlite3.Connection]:
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     for ddl in _SCHEMA_DDL:
         conn.execute(ddl)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(verification_events)")}
+    for column in ("workspace_before_json", "workspace_after_json"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE verification_events ADD COLUMN {column} TEXT")
+    version = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    if version is None or int(version[0]) < _VERIFY_SCHEMA_VERSION:
+        for row in conn.execute("SELECT * FROM verification_events ORDER BY id"):
+            conn.execute("INSERT OR REPLACE INTO verification_checks VALUES (?, ?, ?, ?)",
+                         (row["session_id"], row["root"], _check_key(row), row["id"]))
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
         (str(_VERIFY_SCHEMA_VERSION),),
@@ -272,16 +294,23 @@ def _equivalent_needles(needle: list[str]) -> list[list[str]]:
 
 def _find_canonical_match(command: str, canonical_commands: list[str], exit_code: int) -> Optional[tuple[str, list[str]]]:
     """Return ``(canonical, trailing_args)`` for the first detected command."""
-    segments = _split_shell_segments(command)
-    for canonical in canonical_commands:
-        needle = _canonical_tokens(canonical)
-        if not needle:
-            continue
-        for index, segment in enumerate(segments):
-            candidate_tokens = _strip_command_prefix(segment.tokens)
-            for candidate in _equivalent_needles(needle):
-                if candidate_tokens[:len(candidate)] == candidate and _exit_status_is_attributable(segments, index, exit_code):
-                    return canonical, candidate_tokens[len(candidate):]
+    for posix in (True, False):
+        segments = _split_shell_segments(command, posix=posix)
+        for canonical in canonical_commands:
+            needle = _canonical_tokens(canonical)
+            if not needle:
+                continue
+            for index, segment in enumerate(segments):
+                candidate_tokens = _strip_command_prefix(segment.tokens)
+                if candidate_tokens:
+                    executable = candidate_tokens[0].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower()
+                    if re.fullmatch(r"python(?:\d(?:\.\d+)?)?(?:\.exe)?", executable):
+                        candidate_tokens[0] = "python"
+                    elif executable.removesuffix(".exe").removesuffix(".cmd") in {"pytest", "npm", "pnpm", "yarn", "bun", "uv"}:
+                        candidate_tokens[0] = executable.removesuffix(".exe").removesuffix(".cmd")
+                for candidate in _equivalent_needles(needle):
+                    if candidate_tokens[:len(candidate)] == candidate and _exit_status_is_attributable(segments, index, exit_code):
+                        return canonical, candidate_tokens[len(candidate):]
     return None
 
 
@@ -370,7 +399,7 @@ def _prune_old_events(conn: sqlite3.Connection, *, session_id: str, root: str) -
     conn.execute(
         "DELETE FROM verification_events WHERE session_id = ? AND root = ? AND id NOT IN ("
         " SELECT id FROM verification_events WHERE session_id = ? AND root = ?"
-        " ORDER BY id DESC LIMIT ?)",
+        " ORDER BY id DESC LIMIT ?) AND id NOT IN (SELECT event_id FROM verification_checks)",
         (session_id, root, session_id, root, _MAX_EVENTS_PER_SESSION_ROOT),
     )
     conn.execute(
@@ -382,14 +411,16 @@ def _prune_old_events(conn: sqlite3.Connection, *, session_id: str, root: str) -
     )
     conn.execute(
         "DELETE FROM verification_events WHERE created_at < ? AND id NOT IN ("
-        " SELECT last_event_id FROM verification_state WHERE last_event_id IS NOT NULL)",
+        " SELECT last_event_id FROM verification_state WHERE last_event_id IS NOT NULL)"
+        " AND id NOT IN (SELECT event_id FROM verification_checks)",
         (cutoff,),
     )
     conn.execute(
         "DELETE FROM verification_events WHERE id NOT IN ("
         " SELECT id FROM verification_events ORDER BY id DESC LIMIT ?)"
         " AND id NOT IN ("
-        " SELECT last_event_id FROM verification_state WHERE last_event_id IS NOT NULL)",
+        " SELECT last_event_id FROM verification_state WHERE last_event_id IS NOT NULL)"
+        " AND id NOT IN (SELECT event_id FROM verification_checks)",
         (_MAX_TOTAL_UNREFERENCED_EVENTS,),
     )
 
@@ -434,7 +465,9 @@ def classify_verification_command(
     if match is not None:
         canonical, trailing_args = match
         kind = _kind_for_command(canonical)
-        scope = "targeted" if any(map(_looks_like_target, trailing_args)) else "full"
+        selecting = {"-k", "-m", "-t", "--lf", "--last-failed", "--deselect", "--ignore", "--testNamePattern"}
+        scope = "targeted" if any(map(_looks_like_target, trailing_args)) or any(
+            arg.split("=", 1)[0] in selecting for arg in trailing_args) else "full"
     else:
         if verify_commands or _find_ad_hoc_match(command, facts.get("root"), int(exit_code)) is None:
             return None
@@ -448,16 +481,24 @@ def classify_verification_command(
 
 
 def record_terminal_result(
-    *, command: str, cwd: str | Path | None, session_id: str | None, exit_code: int, output: str = ""
+    *, command: str, cwd: str | Path | None, session_id: str | None, exit_code: int, output: str = "",
+    workspace_before: dict[str, Any] | None = None,
+    workspace_after: dict[str, Any] | None = None,
 ) -> Optional[dict[str, Any]]:
     """Record a foreground terminal result when it is verification evidence."""
     evidence = classify_verification_command(command, cwd=cwd, session_id=session_id, exit_code=exit_code, output=output)
-    return None if evidence is None else _insert_evidence(evidence)
+    if evidence is None:
+        return None
+    evidence = replace(evidence,
+        workspace_before_json=json.dumps(workspace_before) if workspace_before is not None else None,
+        workspace_after_json=json.dumps(workspace_after or _workspace_snapshot(cwd)))
+    return _insert_evidence(evidence)
 
 
 def record_verify_run(
     *, root: str | Path, session_id: str | None = None, ok: bool, command: str = "zeus verify",
-    scope: str = "full", output: str = "",
+    scope: str = "full", output: str = "", workspace_before: dict[str, Any] | None = None,
+    workspace_after: dict[str, Any] | None = None,
 ) -> Optional[dict[str, Any]]:
     """Record a completed ``zeus verify`` run as verification evidence.
 
@@ -472,6 +513,8 @@ def record_verify_run(
         status="passed" if ok else "failed", exit_code=0 if ok else 1, cwd=resolved,
         root=str((_project_facts(root) or {}).get("root") or resolved),
         session_id=str(session_id or "default"), output_summary=_summarize_output(output),
+        workspace_before_json=json.dumps(workspace_before) if workspace_before is not None else None,
+        workspace_after_json=json.dumps(workspace_after or _workspace_snapshot(root)),
     ))
 
 
@@ -479,32 +522,43 @@ def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
     """Insert a classified evidence row and repoint the workspace state."""
     created_at = _utc_now()
     e = evidence
+    from agent.redact import redact_terminal_output
+    check_key = _check_key(e.__dict__)
+    command = redact_terminal_output(e.command, "env")
+    output = redact_terminal_output(e.output_summary, "env")
     with _DB_LOCK, _transaction() as conn:
         cur = conn.execute(
             "INSERT INTO verification_events("
             " created_at, session_id, cwd, root, command, canonical_command,"
-            " kind, scope, status, exit_code, output_summary"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (created_at, e.session_id, e.cwd, e.root, e.command, e.canonical_command, e.kind, e.scope,
-             e.status, e.exit_code, e.output_summary),
+            " kind, scope, status, exit_code, output_summary, workspace_before_json, workspace_after_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (created_at, e.session_id, e.cwd, e.root, command, e.canonical_command, e.kind, e.scope,
+             e.status, e.exit_code, output, e.workspace_before_json, e.workspace_after_json),
         )
         if cur.lastrowid is None:
             raise RuntimeError("verification event insert did not return an id")
         event_id = int(cur.lastrowid)
+        conn.execute("INSERT OR REPLACE INTO verification_checks VALUES (?, ?, ?, ?)",
+                     (e.session_id, e.root, check_key, event_id))
+        run_id = _parse_snapshot(e.workspace_before_json).get("_verification_run_id")
+        if run_id:
+            conn.execute("DELETE FROM verification_active WHERE run_id=? AND session_id=? AND root=?",
+                         (run_id, e.session_id, e.root))
         conn.execute(
             "INSERT INTO verification_state("
             " session_id, root, last_event_id, last_edit_at, changed_paths_json"
             ") VALUES (?, ?, ?, NULL, '[]')"
             " ON CONFLICT(session_id, root) DO UPDATE SET"
-            " last_event_id = excluded.last_event_id,"
-            " last_edit_at = NULL,"
-            " changed_paths_json = '[]'",
+            " last_event_id = excluded.last_event_id",
             (e.session_id, e.root, event_id),
         )
         _prune_old_events(conn, session_id=e.session_id, root=e.root)
         conn.commit()
 
-    return {"id": event_id, **e.__dict__, "created_at": created_at}
+    from agent.verification_report import decorate_check
+    event = {"id": event_id, **e.__dict__, "created_at": created_at, "check_key": check_key,
+             "command": command, "output_summary": output}
+    return decorate_check(event, _parse_snapshot(e.workspace_after_json), None)
 
 
 def mark_workspace_edited(
@@ -542,14 +596,68 @@ def mark_workspace_edited(
     return {"session_id": sid, "root": root, "last_edit_at": edited_at, "changed_paths": changed_paths}
 
 
-def verification_status(*, session_id: str | None, cwd: str | Path | None) -> dict[str, Any]:
-    """Return the best known verification state for a session/workspace.
+def _check_key(event) -> str:
+    payload = [event["command"], event["cwd"], event["scope"]]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()
 
-    Evidence recorded before the latest edit is reported as ``stale``.
-    """
+
+def _workspace_snapshot(cwd) -> dict[str, Any]:
+    from agent.workspace_identity import capture_workspace
+
+    return capture_workspace(cwd)
+
+
+def _parse_snapshot(raw) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def begin_verification(*, command: str, cwd, session_id: str | None, local: bool = True) -> dict | None:
+    """Capture before execution, after approval. Remote paths are never hashed on the host."""
+    evidence = classify_verification_command(command, cwd=cwd, session_id=session_id)
+    if evidence is None:
+        return None
+    return _begin_evidence(evidence, local=local)
+
+
+def begin_verify_run(*, root, session_id: str | None, command="zeus verify", scope="full") -> dict:
+    resolved = str(Path(root).resolve())
+    evidence = VerificationEvidence(command=command, canonical_command="zeus verify", kind="verify",
+        scope=scope, status="running", exit_code=-1, cwd=resolved,
+        root=_root_for(_project_facts(root), root), session_id=str(session_id or "default"))
+    return _begin_evidence(evidence)
+
+
+def _begin_evidence(evidence, *, local=True) -> dict:
+    import uuid
+    from agent.redact import redact_terminal_output
+
+    if not local:
+        workspace = {"root": evidence.root, "status": "unavailable", "fingerprint": "",
+                     "reason": "The command runs remotely; local content is not execution evidence."}
+    else:
+        workspace = _workspace_snapshot(evidence.cwd)
+    run_id = str(uuid.uuid4())
+    workspace["_verification_run_id"] = run_id
+    event = {**evidence.__dict__, "id": "running:" + run_id, "created_at": _utc_now(),
+             "status": "running", "exit_code": None, "check_key": _check_key(evidence.__dict__),
+             "command": redact_terminal_output(evidence.command, "env"),
+             "workspace_before_json": json.dumps(workspace)}
+    with _DB_LOCK, _transaction() as conn:
+        conn.execute("INSERT INTO verification_active VALUES (?, ?, ?, ?, ?)",
+                     (run_id, evidence.session_id, evidence.root, event["check_key"], json.dumps(event)))
+    return workspace
+
+
+def verification_status(*, session_id: str | None, cwd: str | Path | None) -> dict[str, Any]:
+    """Aggregate current results per exact command/cwd/scope without hiding failures."""
+    from agent.verification_report import build_report
+
     facts = _project_facts(cwd)
-    if not facts:
-        return {"status": "not_applicable", "evidence": None}
+    workspace = _workspace_snapshot(_root_for(facts, cwd))
 
     sid = str(session_id or "default")
     root = _root_for(facts, cwd)
@@ -559,18 +667,61 @@ def verification_status(*, session_id: str | None, cwd: str | Path | None) -> di
             " FROM verification_state WHERE session_id = ? AND root = ?",
             (sid, root),
         ).fetchone()
-        if state is None:
-            return {"status": "unverified", "evidence": None, "root": root, "session_id": sid, "changed_paths": []}
-        event = None
-        if state["last_event_id"] is not None:
-            event = conn.execute("SELECT * FROM verification_events WHERE id = ?", (state["last_event_id"],)).fetchone()
+        events = conn.execute("SELECT e.*, c.check_key FROM verification_checks c"
+                              " JOIN verification_events e ON e.id=c.event_id"
+                              " WHERE c.session_id=? AND c.root=? ORDER BY e.id DESC", (sid, root)).fetchall()
+        baseline = conn.execute("SELECT * FROM verification_baselines WHERE session_id=? AND root=?", (sid, root)).fetchone()
+        active = conn.execute("SELECT event_json FROM verification_active WHERE session_id=? AND root=?",
+                              (sid, root)).fetchall()
+    active_events = {event["check_key"]: event for event in (json.loads(row[0]) for row in active)}
+    all_events = list(active_events.values()) + [dict(e) for e in events if e["check_key"] not in active_events]
+    result = build_report(all_events, workspace, dict(baseline) if baseline else None,
+                          status="not_applicable" if not facts and not all_events else None,
+                          last_edit_at=state["last_edit_at"] if state else None)
+    result.update(root=root, session_id=sid,
+                  changed_paths=_load_changed_paths(state["changed_paths_json"]) if state else [])
+    return result
 
-    result = {
-        "evidence": None, "root": root, "session_id": sid, "changed_paths": _load_changed_paths(state["changed_paths_json"])
-    }
-    if event is None:
-        return {"status": "unverified", **result}
 
-    evidence = dict(event)
-    stale = bool(state["last_edit_at"]) and state["last_edit_at"] > evidence["created_at"]
-    return {"status": "stale" if stale else evidence["status"], **result, "evidence": evidence}
+def capture_verification_baseline(*, session_id: str | None, cwd) -> dict[str, Any]:
+    """Pin current observed outcomes, including failures; never infer missing results."""
+    import uuid
+
+    report = verification_status(session_id=session_id, cwd=cwd)
+    if not report["checks"] or any(c["freshness"] != "current" or c["status"] not in {"passed", "failed"}
+                                   for c in report["checks"]):
+        raise ValueError("Run every check on the current workspace before capturing a baseline.")
+    snapshot = report["workspace"]
+    if not snapshot.get("fingerprint"):
+        raise ValueError("A baseline requires an available workspace fingerprint.")
+    checks = [{key: check[key] for key in ("check_key", "status", "command", "cwd", "scope", "id")}
+              for check in report["checks"]]
+    baseline = {"id": str(uuid.uuid4()), "created_at": _utc_now(), "fingerprint": snapshot["fingerprint"],
+                "check_count": len(checks)}
+    # Source reads can take seconds and are independent of the evidence DB.
+    # Holding its lock cannot make filesystem edits atomic with this snapshot.
+    refreshed = _workspace_snapshot(report["root"])
+    if refreshed.get("status") != "ready" or refreshed.get("fingerprint") != snapshot["fingerprint"]:
+        raise ValueError("Workspace changed while capturing the baseline; rerun checks.")
+    with _DB_LOCK, _transaction() as conn:
+        # Reserve the write before reading IDs, including against other processes.
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute("SELECT event_id FROM verification_checks WHERE session_id=? AND root=?",
+                               (report["session_id"], report["root"])).fetchall()
+        if {r[0] for r in current} != {c["id"] for c in checks}:
+            raise ValueError("Verification changed while capturing the baseline; retry.")
+        if conn.execute("SELECT 1 FROM verification_active WHERE session_id=? AND root=? LIMIT 1",
+                        (report["session_id"], report["root"])).fetchone():
+            raise ValueError("A verification run is active; wait for its observed result.")
+        conn.execute("INSERT OR REPLACE INTO verification_baselines VALUES (?, ?, ?, ?, ?, ?)",
+                     (report["session_id"], report["root"], baseline["id"], baseline["created_at"],
+                      baseline["fingerprint"], json.dumps(checks)))
+    return baseline
+
+
+def clear_verification_baseline(*, session_id: str | None, cwd) -> bool:
+    root = _root_for(_project_facts(cwd), cwd)
+    with _DB_LOCK, _transaction() as conn:
+        result = conn.execute("DELETE FROM verification_baselines WHERE session_id=? AND root=?",
+                              (str(session_id or "default"), root))
+    return bool(result.rowcount)

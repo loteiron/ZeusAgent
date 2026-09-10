@@ -573,6 +573,46 @@ class SessionSchemaMixin:
         except sqlite3.DatabaseError as exc:
             with contextlib.suppress(sqlite3.Error):
                 self._conn.rollback()
+            if "vtable constructor failed" in str(exc).lower():
+                # A damaged FTS structure record can prevent even DROP TABLE
+                # from constructing the vtable. Detach only its zero-page
+                # schema entry, then let ordinary DROP reclaim the known
+                # shadow tables. Canonical messages are never schema-edited.
+                # This uses the same guarded demotion as optimize-storage,
+                # with teardown and rebuild in one rollbackable transaction.
+                tables = ["messages_fts"] + (["messages_fts_trigram"] if include_trigram else [])
+                detach_sql = "".join(f"DROP TRIGGER IF EXISTS {trigger};" for trigger in _FTS_TRIGGERS)
+                detach_sql += "DROP VIEW IF EXISTS messages_fts_trigram_src;PRAGMA writable_schema=ON;"
+                for table in tables:
+                    detach_sql += (
+                        "DELETE FROM sqlite_master WHERE type='table' AND rootpage=0 "
+                        f"AND name='{table}' AND sql LIKE 'CREATE VIRTUAL TABLE%';"
+                    )
+                detach_sql += "PRAGMA writable_schema=RESET;"
+                for table in tables:
+                    for suffix in ("data", "idx", "content", "docsize", "config"):
+                        detach_sql += f"DROP TABLE IF EXISTS {table}_{suffix};"
+                try:
+                    cursor.executescript(recovery_sql.replace(drop_sql, detach_sql, 1))
+                except BaseException as retry_exc:
+                    with contextlib.suppress(sqlite3.Error):
+                        self._conn.rollback()
+                    # Cancellation must not leave detached schema entries in
+                    # an open transaction that a later canonical write commits.
+                    if not isinstance(retry_exc, sqlite3.DatabaseError):
+                        raise
+                    exc = retry_exc
+                else:
+                    self._fts_stale = False
+                    self._fts_enabled = True
+                    self._trigram_available = include_trigram
+                    logger.warning("Rebuilt corrupt FTS structures from canonical messages.")
+                    return True
+                finally:
+                    # A failed script must never leave writable_schema enabled
+                    # or a cache referring to rolled-back schema entries.
+                    with contextlib.suppress(sqlite3.Error):
+                        cursor.execute("PRAGMA writable_schema=RESET")
             # Stale indexes must stay detached even on builds whose DDL transaction behavior differs.
             self._drop_all_fts_triggers(cursor)
             self._conn.commit()
@@ -581,6 +621,10 @@ class SessionSchemaMixin:
                 "canonical writes remain enabled with FTS detached.", exc,
             )
             return False
+        except BaseException:
+            with contextlib.suppress(sqlite3.Error):
+                self._conn.rollback()
+            raise
         self._fts_stale = False
         self._fts_enabled = True
         self._trigram_available = include_trigram

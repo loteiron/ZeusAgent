@@ -9,20 +9,22 @@ failures are fail-OPEN (``continue``); the turn budget is the backstop.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import math
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from zeus_cli._subprocess_compat import noninteractive_git_env
+from zeus_cli._subprocess_compat import IS_WINDOWS, kill_process_tree, windows_hide_flags
+from zeus_cli.goal_evidence import gate_freshness, normalized_workspace
+from zeus_cli.goal_concurrency import GoalStateChanged, save_if_unchanged, stored_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +351,14 @@ class GoalGate:
     last_output_tail: str = ""
     # Workspace fingerprint at the last FAILED run — skips re-running an identical gate unchanged.
     last_failed_fingerprint: str = ""
+    cwd: str = ""
+    started_at: float = 0.0
+    completed_at: float = 0.0
+    duration_ms: float = 0.0
+    fingerprint_before: str = ""
+    fingerprint_after: str = ""
+    freshness: str = "not_run"
+    freshness_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -365,48 +375,41 @@ class GoalGate:
             last_exit_code=(int(data["last_exit_code"]) if data.get("last_exit_code") is not None else None),
             last_output_tail=str(data.get("last_output_tail") or ""),
             last_failed_fingerprint=str(data.get("last_failed_fingerprint") or ""),
+            **{k: str(data.get(k) or "") for k in ("cwd", "fingerprint_before", "fingerprint_after", "freshness_reason")},
+            **{k: float(data.get(k) or 0) for k in ("started_at", "completed_at", "duration_ms")},
+            freshness=str(data.get("freshness") or "unknown"),
         )
 
 
 def workspace_fingerprint(cwd: Optional[str] = None) -> str:
-    """sha256 of ``git rev-parse HEAD`` + ``git status --porcelain``; "" outside git (never matches,
-    so gates always re-run — a safe fallback)."""
-    workdir = cwd or os.getcwd()
-    try:
-        outputs = []
-        for argv, timeout in (
-            (["git", "rev-parse", "HEAD"], 10),
-            (["git", "status", "--porcelain"], 30),
-        ):
-            proc = subprocess.run(
-                argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=timeout, cwd=workdir, stdin=subprocess.DEVNULL, env=noninteractive_git_env(),
-            )
-            if proc.returncode != 0:
-                return ""
-            outputs.append(proc.stdout)
-        blob = outputs[0].strip() + "\n" + outputs[1]
-        return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
-    except Exception:
-        return ""
+    """Canonical content identity; unavailable identities never certify a gate."""
+    from agent.workspace_identity import capture_workspace
+    return str(capture_workspace(cwd or os.getcwd()).get("fingerprint") or "")
 
 
 def run_gate(gate: GoalGate, *, cwd: Optional[str] = None) -> Tuple[bool, int, str]:
     """Run one gate through the shell. Returns ``(passed, exit_code, output_tail)``; a timeout kills
     the process and counts as exit code -1."""
     try:
-        # utf-8/replace: operator-configured output is arbitrary bytes; strict codepage decoding of
-        # one unmappable byte (emoji/CJK on a non-UTF-8 Windows console) kills the reader thread and
-        # the tail the agent needs arrives empty.
-        proc = subprocess.run(
-            gate.command, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=max(1, int(gate.timeout_seconds)), cwd=cwd or None,
-        )
-        combined = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
-        return proc.returncode == 0, proc.returncode, combined[-_GATE_OUTPUT_TAIL_CHARS:]
-    except subprocess.TimeoutExpired as exc:
-        out = "".join(c if isinstance(c, str) else c.decode("utf-8", "replace") for c in (exc.stdout, exc.stderr) if c)
-        return False, -1, (out + f"\n[gate timed out after {gate.timeout_seconds}s]")[-_GATE_OUTPUT_TAIL_CHARS:]
+        # A file avoids unbounded pipe-reader joins when a timed-out descendant keeps its
+        # inherited stdout open, and avoids buffering an entire test suite in memory.
+        options = {"creationflags": windows_hide_flags()} if IS_WINDOWS else {"process_group": 0}
+        with tempfile.TemporaryFile() as output:
+            proc = subprocess.Popen(
+                gate.command, shell=True, stdout=output, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, cwd=cwd or None, **options,
+            )
+            suffix = ""
+            try:
+                code = proc.wait(timeout=max(1, int(gate.timeout_seconds)))
+            except subprocess.TimeoutExpired:
+                kill_process_tree(proc)
+                code = -1
+                suffix = f"\n[gate timed out after {gate.timeout_seconds}s]"
+            output.seek(0, os.SEEK_END)
+            output.seek(max(0, output.tell() - _GATE_OUTPUT_TAIL_CHARS * 4))
+            tail = (output.read().decode("utf-8", "replace") + suffix)[-_GATE_OUTPUT_TAIL_CHARS:]
+            return code == 0, code, tail
     except Exception as exc:
         return False, -1, f"[gate could not run: {type(exc).__name__}: {exc}]"
 
@@ -448,6 +451,8 @@ class GoalState:
     contract: GoalContract = field(default_factory=GoalContract)
     # /goal gate add <cmd>: ALL must pass before the judge may declare done.
     gates: List[GoalGate] = field(default_factory=list)
+    workspace: str = ""
+    revision: int = 0
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -456,7 +461,7 @@ class GoalState:
     def from_json(cls, raw: str) -> "GoalState":
         data = json.loads(raw)
         raw_subgoals = data.get("subgoals") or []
-        ints = {k: int(data.get(k) or 0) for k in ("turns_used", "consecutive_parse_failures", "consecutive_transport_failures", "waiting_on_delegations")}
+        ints = {k: int(data.get(k) or 0) for k in ("revision", "turns_used", "consecutive_parse_failures", "consecutive_transport_failures", "waiting_on_delegations")}
         floats = {k: float(data.get(k) or 0.0) for k in ("created_at", "last_turn_at", "waiting_until", "waiting_since")}
         return cls(
             goal=data.get("goal", ""),
@@ -470,6 +475,7 @@ class GoalState:
             waiting_on_session=(str(data["waiting_on_session"]) if data.get("waiting_on_session") else None),
             waiting_reason=data.get("waiting_reason"),
             contract=GoalContract.from_dict(data.get("contract")),
+            workspace=str(data.get("workspace") or ""),
             gates=[
                 GoalGate.from_dict(g) for g in (data.get("gates") or [])
                 if isinstance(g, dict) and str(g.get("command") or "").strip()
@@ -640,6 +646,7 @@ def save_goal(session_id: str, state: GoalState) -> None:
         _warn_dropped_write("GoalManager", "goal", session_id)
         return
     try:
+        state.revision += 1
         db.set_meta(_meta_key(session_id), state.to_json())
     except Exception as exc:
         logger.debug("GoalManager: set_meta failed: %s", exc)
@@ -1089,10 +1096,26 @@ class GoalManager:
     canonical user-role message to feed back into ``run_conversation``.
     """
 
-    def __init__(self, session_id: str, *, default_max_turns: int = DEFAULT_MAX_TURNS):
+    def __init__(self, session_id: str, *, default_max_turns: int = DEFAULT_MAX_TURNS, workspace: Optional[str] = None):
         self.session_id = session_id
         self.default_max_turns = int(default_max_turns or DEFAULT_MAX_TURNS)
         self._state: Optional[GoalState] = load_goal(session_id)
+        self._persisted_snapshot = self._state.to_json() if self._state else None
+        self._evaluation_lock = threading.Lock()
+        self._evaluation_thread = None
+        self._evaluation_snapshot = None
+        self._workspace = None
+        if workspace is not None:
+            self.bind_workspace(workspace)
+
+    def bind_workspace(self, workspace: str) -> None:
+        """Refresh an intentionally moved session without changing the process cwd."""
+        from zeus_cli.goal_workspace import goal_terminal_backend
+
+        self._workspace = normalized_workspace(workspace) if goal_terminal_backend(self.session_id) == "local" else workspace
+        if self._state is not None and self._workspace is not None and self._state.workspace != self._workspace:
+            self._state.workspace = self._workspace
+            self._save()
 
     # --- introspection ------------------------------------------------
 
@@ -1137,9 +1160,38 @@ class GoalManager:
 
     # --- mutation -----------------------------------------------------
 
-    def _save(self) -> Optional[GoalState]:
-        save_goal(self.session_id, self._state)
+    def _save(self, *, user_control: bool = False, completing: bool = False,
+              frozen_state: Optional[GoalState] = None, expected_snapshot: Optional[str] = None) -> Optional[GoalState]:
+        evaluating = not user_control and self._evaluation_thread == threading.get_ident()
+        candidate = frozen_state if frozen_state is not None else self._state
+        db = _get_session_db() if evaluating or completing else None
+        if db is not None:
+            expected = (expected_snapshot if frozen_state is not None else
+                        self._evaluation_snapshot if evaluating else self._persisted_snapshot)
+            candidate.revision += 1
+            try:
+                save_if_unchanged(db, _meta_key(self.session_id), candidate, expected, GoalState.from_json)
+            except GoalStateChanged:
+                self._state = load_goal(self.session_id)
+                self._persisted_snapshot = self._state.to_json() if self._state else None
+                raise
+        else:
+            save_goal(self.session_id, candidate)
+        if frozen_state is not None:
+            self._state = load_goal(self.session_id) if db is not None else candidate
+        self._persisted_snapshot = self._state.to_json() if self._state else None
+        if frozen_state is not None and self._persisted_snapshot != candidate.to_json():
+            raise GoalStateChanged("Goal changed while completion was being saved")
+        if evaluating:
+            self._evaluation_snapshot = self._persisted_snapshot
         return self._state
+
+    def _assert_evaluation_current(self) -> None:
+        if self._evaluation_thread != threading.get_ident():
+            return
+        db = _get_session_db()
+        if db is not None and stored_snapshot(db, _meta_key(self.session_id), GoalState.from_json) != self._evaluation_snapshot:
+            raise GoalStateChanged("Goal changed while its checks were running")
 
     def _require_goal(self) -> GoalState:
         if self._state is None or not self.has_goal():
@@ -1168,8 +1220,9 @@ class GoalManager:
             goal=goal, status="active", turns_used=0, created_at=time.time(), last_turn_at=0.0,
             max_turns=int(max_turns) if max_turns else self.default_max_turns,
             contract=contract if contract is not None else GoalContract(),
+            workspace=self._workspace if self._workspace is not None else normalized_workspace(os.getcwd()),
         )
-        return self._save()
+        return self._save(user_control=True)
 
     def set_contract(self, contract: GoalContract) -> Optional[GoalState]:
         """Attach or replace the completion contract on the active goal."""
@@ -1184,7 +1237,7 @@ class GoalManager:
         self._state.status = "paused"
         self._state.paused_reason = reason
         self._state.clear_wait()   # a wait barrier is meaningless once paused
-        return self._save()
+        return self._save(user_control=True)
 
     def resume(self, *, reset_budget: bool = True) -> Optional[GoalState]:
         if not self._state:
@@ -1194,22 +1247,39 @@ class GoalManager:
         self._state.clear_wait()   # resuming starts fresh
         if reset_budget:
             self._state.turns_used = 0
-        return self._save()
+        return self._save(user_control=True)
 
     def clear(self) -> None:
         if self._state is None:
             return
         self._state.status = "cleared"
-        self._save()
+        self._save(user_control=True)
         self._state = None
 
     def mark_done(self, reason: str) -> None:
         if not self._state:
             return
-        self._state.status = "done"
-        self._state.last_verdict = "done"
-        self._state.last_reason = reason
-        self._save()
+        # Freeze both the goal and its authority before fingerprinting can block.
+        # A shared manager may receive pause/set while this operation is running.
+        expected = (self._evaluation_snapshot if self._evaluation_thread == threading.get_ident()
+                    else self._persisted_snapshot)
+        state = GoalState.from_json(self._state.to_json())
+        if state.gates:
+            from zeus_cli.goal_workspace import goal_terminal_backend
+            if goal_terminal_backend(self.session_id) != "local":
+                raise ValueError("quality gate evidence requires the session's local terminal backend")
+            fingerprint = (workspace_fingerprint(state.workspace)
+                           if state.workspace and all(g.completed_at for g in state.gates) else "")
+            for gate in state.gates:
+                freshness, explanation = gate_freshness(gate, state.workspace, fingerprint)
+                gate.freshness, gate.freshness_reason = freshness, explanation
+                if gate.last_exit_code != 0 or freshness != "current":
+                    self._save(completing=True, frozen_state=state, expected_snapshot=expected)
+                    raise ValueError(f"quality gate needs a current passing result: $ {gate.command}. {explanation}")
+        state.status = "done"
+        state.last_verdict = "done"
+        state.last_reason = reason
+        self._save(completing=True, frozen_state=state, expected_snapshot=expected)
 
     # --- /subgoal user controls ---------------------------------------
 
@@ -1285,9 +1355,14 @@ class GoalManager:
         if not self._state.gates:
             return "(no quality gates — use /goal gate add <command> to require one)"
         lines = []
+        fingerprint = (workspace_fingerprint(self._state.workspace)
+                       if self._state.workspace and any(g.completed_at for g in self._state.gates) else "")
         for i, g in enumerate(self._state.gates, start=1):
             status = ""
-            if g.last_exit_code == 0:
+            freshness, _ = gate_freshness(g, self._state.workspace, fingerprint)
+            if g.last_exit_code is not None and freshness != "current":
+                status = f" {freshness} evidence (last exit {g.last_exit_code})"
+            elif g.last_exit_code == 0:
                 status = " ✓ passing"
             elif g.last_exit_code is not None:
                 status = f" ✗ failing (exit {g.last_exit_code}, attempt {g.attempts}/{g.max_retries})"
@@ -1304,23 +1379,50 @@ class GoalManager:
         state = self._state
         if state is None or not state.gates:
             return None
+        from agent.redact import redact_terminal_output
+        from zeus_cli.goal_workspace import goal_terminal_backend
+        backend = goal_terminal_backend(self.session_id)
+        if backend != "local":
+            return self._pause_decision(
+                "quality gates require a local terminal workspace", "gate_unverified",
+                f"Session terminal backend is {backend}; host-side gates were not executed.",
+                "Goal paused: required quality gates need a local terminal workspace. "
+                "Use checks in the configured backend or switch to a local workspace before resuming.",
+            )
 
-        fingerprint = workspace_fingerprint()
         for gate in state.gates:
-            unchanged = bool(fingerprint) and gate.last_exit_code not in (None, 0) and gate.last_failed_fingerprint == fingerprint
+            self._assert_evaluation_current()
+            fingerprint = workspace_fingerprint(state.workspace) if state.workspace else ""
+            unchanged = (bool(fingerprint) and gate.last_exit_code not in (None, 0)
+                         and gate.last_failed_fingerprint == fingerprint and gate.cwd == state.workspace)
             if unchanged:
                 passed, exit_code, tail = False, int(gate.last_exit_code or -1), gate.last_output_tail
             else:
-                passed, exit_code, tail = run_gate(gate)
+                gate.cwd = state.workspace
+                gate.fingerprint_before = fingerprint
+                gate.started_at = time.time()
+                started = time.monotonic()
+                if state.workspace:
+                    passed, exit_code, tail = run_gate(gate, cwd=state.workspace)
+                else:
+                    passed, exit_code, tail = False, -1, "[gate needs an explicit session workspace]"
+                self._assert_evaluation_current()
+                gate.completed_at = time.time()
+                gate.duration_ms = round((time.monotonic() - started) * 1000, 3)
+                gate.fingerprint_after = workspace_fingerprint(state.workspace) if state.workspace else ""
             gate.last_exit_code = exit_code
+            tail = redact_terminal_output(tail, gate.command, force=True)
             gate.last_output_tail = tail
+            gate.freshness, gate.freshness_reason = gate_freshness(gate, state.workspace, gate.fingerprint_after)
             if passed:
                 gate.attempts = 0
                 gate.last_failed_fingerprint = ""
+                if gate.freshness != "current":
+                    return self._unverified_gate_decision(gate.freshness_reason)
                 continue
 
             gate.attempts += 1
-            gate.last_failed_fingerprint = fingerprint
+            gate.last_failed_fingerprint = fingerprint if gate.freshness == "current" else ""
             skipped_note = " (workspace unchanged since last failure — not re-run)" if unchanged else ""
 
             if gate.attempts > gate.max_retries:
@@ -1347,6 +1449,17 @@ class GoalManager:
 
         self._save()
         return None
+
+    def _unverified_gate_decision(self, reason: str) -> Dict[str, Any]:
+        self._state.last_verdict = "gate_unverified"
+        self._state.last_reason = reason
+        self._save()
+        if self._state.turns_used >= self._state.max_turns:
+            return self._budget_pause(self._state, "gate_unverified", reason)
+        prompt = (f"[Goal verification needs fresh evidence]\nGoal: {self._state.goal}\n"
+                  f"{reason}\nRe-run the required checks against the current workspace before claiming completion. "
+                  "If verification is unavailable, explain the blocker.")
+        return _decision("active", True, prompt, "gate_unverified", reason, f"Verification incomplete: {reason}")
 
     # --- /goal wait barrier -------------------------------------------
 
@@ -1464,6 +1577,32 @@ class GoalManager:
         background_processes: Optional[List[Dict[str, Any]]] = None,
         active_delegations: int = 0,
     ) -> Dict[str, Any]:
+        """Discard a slow result if user controls or another evaluator changed the goal."""
+        if not self._evaluation_lock.acquire(blocking=False):
+            return _decision("active", False, None, "evaluating", "goal check already running", "")
+        self._evaluation_thread = threading.get_ident()
+        self._evaluation_snapshot = self._persisted_snapshot
+        try:
+            self._assert_evaluation_current()
+            return self._evaluate_after_turn(
+                last_response, user_initiated=user_initiated,
+                background_processes=background_processes, active_delegations=active_delegations,
+            )
+        except GoalStateChanged:
+            self._state = load_goal(self.session_id)
+            self._persisted_snapshot = self._state.to_json() if self._state else None
+            return _decision(self._state.status if self._state else None, False, None,
+                             "goal_changed", "goal changed while checking", "Goal changed; the previous check was discarded.")
+        finally:
+            self._evaluation_thread = None
+            self._evaluation_snapshot = None
+            self._evaluation_lock.release()
+
+    def _evaluate_after_turn(
+        self, last_response: str, *, user_initiated: bool = True,
+        background_processes: Optional[List[Dict[str, Any]]] = None,
+        active_delegations: int = 0,
+    ) -> Dict[str, Any]:
         """Run gates + judge and update state. Return a decision dict (``status``, ``should_continue``,
         ``continuation_prompt``, ``verdict``, ``reason``, ``message``). Both real user prompts and our
         own continuations increment ``turns_used`` — both consume model budget."""
@@ -1490,6 +1629,7 @@ class GoalManager:
             state.goal, last_response, subgoals=state.subgoals or None, background_processes=background_processes,
             contract=state.contract if state.has_contract() else None, active_delegations=active_delegations,
         )
+        self._assert_evaluation_current()
         state.last_verdict = verdict
         state.last_reason = reason
         # Parse failures reset on any usable reply INCLUDING transport errors, so a flaky network
@@ -1512,8 +1652,10 @@ class GoalManager:
             )
 
         if verdict == "done":
-            state.status = "done"
-            self._save()
+            try:
+                self.mark_done(reason)
+            except ValueError as exc:
+                return self._unverified_gate_decision(str(exc))
             return _decision("done", False, None, "done", reason, f"✓ Goal achieved: {reason}")
 
         # Persistent judge failures (API unreachable / unparseable output) auto-pause and point at the

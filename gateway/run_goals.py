@@ -86,8 +86,10 @@ class GatewayGoalsMixin:
         """Return ``(GoalManager, session_entry)`` for this event, or ``(None, None)``."""
         def _load():
             from zeus_cli.goals import GoalManager
+            from zeus_cli.goal_workspace import session_goal_workspace
             max_turns = self._goal_max_turns_from_config()
-            return lambda sid: GoalManager(session_id=sid, default_max_turns=max_turns)
+            return lambda sid: GoalManager(session_id=sid, default_max_turns=max_turns,
+                                           workspace=session_goal_workspace(sid, self._terminal_cwd()))
         return await self._manager_for_event(event, "goal", _load)
 
     async def _get_heartbeat_manager_for_event(self, event: "MessageEvent"):
@@ -266,8 +268,10 @@ class GatewayGoalsMixin:
         continuation through the adapter FIFO so a simultaneous real user message takes priority."""
         def _load():
             from zeus_cli.goals import GoalManager
+            from zeus_cli.goal_workspace import session_goal_workspace
             max_turns = self._goal_max_turns_from_config()
-            return lambda sid: GoalManager(session_id=sid, default_max_turns=max_turns)
+            return lambda sid: GoalManager(session_id=sid, default_max_turns=max_turns,
+                                           workspace=session_goal_workspace(sid, self._terminal_cwd()))
 
         mgr = await self._post_turn_manager(session_entry, "goal continuation", "goals", _load)
         if mgr is None or not mgr.is_active():

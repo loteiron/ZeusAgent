@@ -1,14 +1,15 @@
 import type { Dispatch, SetStateAction } from 'react'
 
-import type { ZeusAgentGateway } from '@/zeus'
 import type { IconComponent } from '@/lib/icons'
 import type { EnvVarInfo } from '@/types/zeus'
+import type { ZeusAgentGateway } from '@/zeus'
 
 export type SettingsView =
   | 'about'
   | 'billing'
   | 'connections'
   | 'gateway'
+  | 'hermes-migration'
   | 'keybinds'
   | 'keys'
   | 'notifications'

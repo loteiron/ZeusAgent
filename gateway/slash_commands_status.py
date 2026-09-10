@@ -274,7 +274,16 @@ class GatewayStatusCommandsMixin:
                   session_key=self._redact_matrix_session_key(session_key)),
             ]
         lines += ["", t("gateway.status.platforms", platforms=', '.join(p.value for p in self.adapters))]
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        control_adapter = self._adapter_for_source(source)
+        if callable(getattr(type(control_adapter), "send_session_controls", None)):
+            try:
+                result = await control_adapter.send_session_controls(self, event, session_entry, text)
+                if result.success:
+                    return ""
+            except Exception:
+                logger.debug("Session controls unavailable; returning status text", exc_info=True)
+        return text
 
     async def _status_session_db_facts(self, session_id: str):
         """``(title, session_row, db_total_tokens, persisted_route)`` for /status; each fail-open.

@@ -114,10 +114,10 @@ describe('session-control store', () => {
     ['non-finite top-level timestamp', { ...FULL_SNAPSHOT, updated_at: Number.NaN }],
     ['malformed goal contract', { ...FULL_SNAPSHOT, goal: { ...FULL_SNAPSHOT.goal!, contract: { outcome: 3 } } }],
     [
-      'gate output that is not in the allowlisted summary',
+      'gate process environment that is not in the allowlisted summary',
       {
         ...FULL_SNAPSHOT,
-        goal: { ...FULL_SNAPSHOT.goal!, gates: [{ ...FULL_SNAPSHOT.goal!.gates[0], last_output_tail: 'leak' }] }
+        goal: { ...FULL_SNAPSHOT.goal!, gates: [{ ...FULL_SNAPSHOT.goal!.gates[0], environment: { SECRET: 'leak' } }] }
       }
     ],
     [
