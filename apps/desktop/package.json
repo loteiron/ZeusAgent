@@ -327,6 +327,7 @@
       ]
     },
     "deb": {
+      "artifactName": "ZeusAgent-${version}-linux-x64.deb",
       "packageName": "zeus-agent",
       "afterInstall": "installer/linux/after-install.sh",
       "afterRemove": "installer/linux/after-remove.sh",

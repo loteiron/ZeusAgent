@@ -37,16 +37,13 @@ function electronBuilderCli() {
 }
 
 const dist = electronDistDir()
-// Local `zeus desktop` builds only ever package (--dir or dist), never
-// publish a GitHub release — no CI workflow drives this script. But the npm
-// lifecycle env sets CI=1 (so esbuild's postinstall doesn't try interactive
-// animations), and electron-builder treats CI=1 as a signal to implicitly
-// resolve a publish target. That resolution reads <projectDir>/.git/config
-// directly — projectDir here is apps/desktop, which has no .git of its own
-// (only the repo root does) and no "repository" field in its package.json —
-// so it fails with "Cannot detect repository by .git/config". Pin publish to
-// "never" so electron-builder skips that lookup entirely.
-const args = ["--publish", "never"]
+// Local and CI package builds default to no publishing. Preserve an explicit
+// caller policy without adding a duplicate: yargs turns repeated --publish
+// values into an array, which electron-builder treats as publishing enabled
+// even when every value is "never".
+const commandArgs = process.argv.slice(2)
+const hasPublishPolicy = commandArgs.some(arg => /^(?:--publish|--?p)(?:=|$)/.test(arg))
+const args = hasPublishPolicy ? [] : ["--publish", "never"]
 if (dist && fs.existsSync(distBinary(dist))) {
   args.push(`-c.electronDist=${dist}`)
 } else {
@@ -55,7 +52,7 @@ if (dist && fs.existsSync(distBinary(dist))) {
       "via @electron/get (electronVersion + ELECTRON_MIRROR)."
   )
 }
-args.push(...process.argv.slice(2))
+args.push(...commandArgs)
 
 const result = spawnSync(process.execPath, [electronBuilderCli(), ...args], {
   stdio: "inherit",
