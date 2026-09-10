@@ -1,7 +1,6 @@
 """Returning from verification means its actual child server has stopped."""
 
 import os
-import json
 import shlex
 import signal
 import socket
@@ -13,6 +12,7 @@ import pytest
 
 from agent.verify import runner
 from agent.verify.recipes import Recipe
+from tests.fakes.process_cleanup_trace import ProcessCleanupTrace
 
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signal semantics")
@@ -78,68 +78,7 @@ def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, mon
     # for the deliberately uncooperative child, not its startup/readiness limit.
     if behavior == "ignore-term":
         monkeypatch.setattr(runner, "_PROCESS_TERMINATE_GRACE", 0.2, raising=False)
-    # Keep native failure diagnostics scoped to the child created by this test.
-    # Record observations, never alter the returned status or signal delivery.
-    events = []
-    owned = set()
-    actual_getpgid, actual_status, actual_pids = os.getpgid, psutil.Process.status, psutil.pids
-    actual_terminate, actual_signal = runner._terminate_process_group, os.killpg
-
-    def record(event, **values):
-        row = {"event": event, **values}
-        if not events or {key: value for key, value in events[-1].items() if key != "elapsed"} != row:
-            events.append({"elapsed": round(time.monotonic() - started, 5), **row})
-
-    def snapshot(label):
-        rows = []
-        for pid in sorted(owned):
-            row = {"pid": pid, "listed": pid in actual_pids()}
-            try:
-                row["pgid"] = actual_getpgid(pid)
-                row["status"] = actual_status(psutil.Process(pid))
-            except (OSError, psutil.Error) as exc:
-                row["error"] = repr(exc)
-            rows.append(row)
-        record(label, members=rows)
-
-    def observe_group(pid):
-        try:
-            result = actual_getpgid(pid)
-        except OSError as exc:
-            if pid in owned:
-                record("getpgid_error", pid=pid, error=repr(exc))
-            raise
-        if pid in owned:
-            record("getpgid", pid=pid, group=result)
-        return result
-
-    def observe_status(process):
-        result = actual_status(process)
-        if process.pid in owned:
-            record("status", pid=process.pid, status=result)
-        return result
-
-    def observe_signal(pgid, sig):
-        record("signal", group=pgid, signal=int(sig))
-        return actual_signal(pgid, sig)
-
-    def observe_terminate(proc):
-        owned.add(proc.pid)
-        try:
-            owned.add(int((tmp_path / "child.pid").read_text(encoding="utf-8")))
-        except FileNotFoundError:
-            record("child_not_started")
-        snapshot("before_terminate")
-        try:
-            actual_terminate(proc)
-        finally:
-            snapshot("after_terminate")
-            record("leader", pid=proc.pid, exit_code=proc.poll())
-
-    monkeypatch.setattr(os, "getpgid", observe_group)
-    monkeypatch.setattr(psutil.Process, "status", observe_status)
-    monkeypatch.setattr(os, "killpg", observe_signal)
-    monkeypatch.setattr(runner, "_terminate_process_group", observe_terminate)
+    trace = ProcessCleanupTrace(monkeypatch, tmp_path, port, f"group-{behavior}-{getattr(group_probe_error, '__name__', 'none')}")
     recipe = Recipe(name="owned child server", start=shlex.join([sys.executable, str(wrapper)]), port=port)
     child = None
     started = time.monotonic()
@@ -147,20 +86,10 @@ def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, mon
         result = runner.run_verify(tmp_path, recipe, phases=("start",), ready_timeout=3)
         assert result.ok, result.to_dict()
         assert result.readiness.status_code == 200
-        with socket.socket() as probe:
-            probe.settimeout(0.5)
-            connected = probe.connect_ex(("127.0.0.1", port))
-        record("immediate_connect", result=connected)
-        if connected == 0:
-            snapshot("socket_still_accepts")
-            # Diagnostic sampling does not change the failed immediate result.
-            for pause in (0.01, 0.05, 0.2):
-                time.sleep(pause)
-                with socket.socket() as probe:
-                    probe.settimeout(0.5)
-                    record("later_connect", pause=pause, result=probe.connect_ex(("127.0.0.1", port)))
-                snapshot("later_members")
-        assert connected != 0, "verification left its server listening: " + json.dumps(events)
+        connected = trace.connect()
+        trace.record("connect_after_verify", result=connected)
+        trace.assert_stopped()
+        assert connected != 0, "verification left its server listening"
         assert (tmp_path / "term-received").exists(), "the owned server did not receive termination"
         if behavior != "ignore-term":
             assert (tmp_path / "graceful-exit").exists(), "teardown did not allow graceful child cleanup"
@@ -173,6 +102,7 @@ def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, mon
             assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
         assert time.monotonic() - started < 6, "bounded cleanup stalled after the wrapper exited"
     finally:
+        trace.finish()
         # A red run must also leave the test machine clean. The recorded group
         # was created by run_verify(start_new_session=True), never our own group.
         group_file = tmp_path / "group.pid"

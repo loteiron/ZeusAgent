@@ -81,6 +81,7 @@ const app = await _electron.launch({ executablePath: '/opt/ZeusAgent/ZeusAgent',
   args: ['--disable-gpu'], cwd, env, timeout: 25 * 60_000 });
 let identity, connection;
 let localInstallChoiceObserved = false;
+let providerPickerDismissed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(180_000);
@@ -106,8 +107,13 @@ try {
   assert.equal(identity.version, manifest.version);
   assert.ok(identity.path.startsWith('/opt/ZeusAgent/'));
   const later = page.getByRole('button', { name: "I'll choose a provider later" });
-  await Promise.race([later.waitFor({ state: 'visible' }), page.locator('textarea, [contenteditable="true"]').first().waitFor({ state: 'visible' })]);
-  if (await later.isVisible()) await later.click();
+  // This fixture always has a fresh profile and no provider credentials. The
+  // composer is mounted behind onboarding before its async provider check ends;
+  // racing against that composer would skip the user's required visible choice.
+  await later.waitFor({ state: 'visible', timeout: 180_000 });
+  await later.click();
+  await later.waitFor({ state: 'hidden', timeout: 30_000 });
+  providerPickerDismissed = true;
   await page.locator('textarea, [contenteditable="true"]').first().waitFor({ state: 'visible' });
   await page.waitForFunction(() => !/Starting ZeusAgent|Gateway\s+checking/i.test(document.body.innerText));
   await page.waitForFunction(() => {
@@ -136,6 +142,6 @@ await fs.writeFile(path.join(output, 'acceptance.json'), JSON.stringify({
   platform: process.platform, arch: process.arch, os: (await fs.readFile('/etc/os-release', 'utf8')),
   commit: stamp.commit, identity, connection, callerDirectoryPreserved: true,
   exitStatusPreserved: true, coldBootstrap: true, firstInterface: desktopFirst ? 'desktop' : 'cli', sharedRuntimeReused: true,
-  localInstallChoiceObserved, inferenceRequested: false, elapsedMs: Date.now() - before,
+  localInstallChoiceObserved, providerPickerDismissed, inferenceRequested: false, elapsedMs: Date.now() - before,
 }, null, 2));
 console.log('PASS: Ubuntu package cold CLI, real Desktop and shared private runtime');

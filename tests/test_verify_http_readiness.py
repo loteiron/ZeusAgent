@@ -2,6 +2,8 @@
 
 import contextlib
 import http.server
+import os
+import signal
 import socket
 import sys
 import threading
@@ -15,6 +17,7 @@ from agent.verify.recipes import Recipe
 from agent.verify import runner
 from agent.verify.runner import _poll_readiness, run_verify
 from tests.fakes import loopback_http_server
+from tests.fakes.process_cleanup_trace import ProcessCleanupTrace
 
 
 @contextlib.contextmanager
@@ -82,9 +85,18 @@ def test_readiness_waits_through_warmup_until_healthy_response(monkeypatch):
 
 
 def test_fixture_finishes_listener_startup_before_yielding(monkeypatch):
-    started = time.monotonic()
+    listener_started = threading.Event()
+    serve_forever = loopback_http_server.LoopbackHTTPServer.serve_forever
+
+    def observe_listener_start(server, **kwargs):
+        listener_started.set()
+        return serve_forever(server, **kwargs)
+
+    monkeypatch.setattr(loopback_http_server.LoopbackHTTPServer, "serve_forever", observe_listener_start)
     with _server((503,), startup_delay=0.3) as (url, received):
-        assert time.monotonic() - started >= 0.3, "fixture yielded before its listener started"
+        # Windows Python 3.12 monotonic() has a 15.625ms clock quantum; an
+        # actual 300ms wait can appear shorter. Observe startup itself instead.
+        assert listener_started.is_set(), "fixture yielded before its listener started"
         ready, code, _error = _poll_http_status(url, monkeypatch)
         assert not ready
         assert code == 503
@@ -154,13 +166,15 @@ def test_a_missing_readiness_route_cannot_verify_the_real_started_project(tmp_pa
 
 
 @pytest.mark.parametrize("dns_delay", [0, 4], ids=["unavailable", "stalled"])
-def test_loopback_fixture_starts_even_when_reverse_dns_is_unavailable(tmp_path, dns_delay):
+def test_loopback_fixture_starts_even_when_reverse_dns_is_unavailable(tmp_path, monkeypatch, dns_delay):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     launcher = tmp_path / "dns_unavailable.py"
     launcher.write_text(
-        "import runpy, socket, sys, time\n"
+        "import os, runpy, socket, sys, time\n"
+        "from pathlib import Path\n"
+        "Path('child.pid').write_text(str(os.getpid()))\n"
         "def unavailable(*args):\n"
         f"    time.sleep({dns_delay})\n"
         "    raise AssertionError('Loopback fixture attempted external reverse DNS')\n"
@@ -170,10 +184,22 @@ def test_loopback_fixture_starts_even_when_reverse_dns_is_unavailable(tmp_path, 
         encoding="utf-8",
     )
     recipe = Recipe(name="DNS-independent HTTP fixture", start=f'"{sys.executable}" "{launcher}"', port=port)
-    result = run_verify(tmp_path, recipe, phases=("start",), ready_timeout=3)
-    assert result.readiness.ready, result.readiness.to_dict()
-    assert result.readiness.status_code == 200
-    assert result.ok
-    with socket.socket() as probe:
-        probe.settimeout(0.5)
-        assert probe.connect_ex(("127.0.0.1", port)) != 0, "verification left its server running"
+    trace = ProcessCleanupTrace(monkeypatch, tmp_path, port, f"dns-{dns_delay}")
+    try:
+        result = run_verify(tmp_path, recipe, phases=("start",), ready_timeout=3)
+        assert result.readiness.ready, result.readiness.to_dict()
+        assert result.readiness.status_code == 200
+        assert result.ok
+        connected = trace.connect()
+        trace.record("connect_after_verify", result=connected)
+        trace.assert_stopped()
+        assert connected != 0, "verification left its server running"
+    finally:
+        trace.finish()
+        if os.name != "nt" and trace.group is not None:
+            # Clean only the session run_verify created, including red runs.
+            assert trace.group != os.getpgrp()
+            try:
+                os.killpg(trace.group, signal.SIGKILL)  # windows-footgun: ok — guarded POSIX test cleanup
+            except ProcessLookupError:
+                pass

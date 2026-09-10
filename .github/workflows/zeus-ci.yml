@@ -163,6 +163,14 @@ jobs:
           name: python-${{ matrix.os }}-results
           path: os-tests.log
           retention-days: 14
+      - name: Retain owned process cleanup observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: process-cleanup-${{ matrix.os }}
+          path: ${{ runner.temp }}/zeus-cleanup-diagnostics/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   toolchain:
     name: Source setup · ${{ matrix.os }} · Node ${{ matrix.node }}
