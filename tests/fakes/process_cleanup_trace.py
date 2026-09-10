@@ -1,4 +1,4 @@
-"""Temporary native-CI observations for the owned verification server only."""
+"""Native process and socket observations scoped to the owned test server."""
 
 import json
 import os
@@ -128,7 +128,9 @@ class ProcessCleanupTrace:
     def finish(self):
         if os.name == "nt":
             return
-        directory = Path(os.environ.get("RUNNER_TEMP", self.tmp_path)) / "zeus-cleanup-diagnostics"
+        # The canonical runner intentionally removes ambient CI variables.
+        # Keep observations in an ignored, known location for artifact upload.
+        directory = Path(__file__).resolve().parents[2] / ".pytest_cache" / "zeus-cleanup-diagnostics"
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / f"{self.name}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
         destination.write_text(json.dumps({

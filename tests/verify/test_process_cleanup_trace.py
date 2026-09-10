@@ -22,3 +22,12 @@ def test_status_observer_preserves_real_process_instance_binding(tmp_path, monke
     assert trace.events[-1]["event"] == "status"
     assert trace.events[-1]["pid"] == process.pid
     assert trace.events[-1]["status"] == expected
+
+    def unavailable_group(_pid):
+        raise ProcessLookupError("group lookup has disappeared before status")
+
+    trace.getpgid = unavailable_group
+    trace.snapshot("independent_status")
+    member = trace.events[-1]["members"][0]
+    assert member["status"] == expected
+    assert "ProcessLookupError" in member["group_error"]

@@ -177,24 +177,64 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
     # after a shell/wrapper exits. Waiting only for that leader can return while
     # its server still listens, and would skip escalation for a stubborn child.
     pgid = proc.pid
+    members: dict[int, psutil.Process] = {}
+    unresolved: set[int] = set()
 
-    def live_members() -> bool:
-        # macOS can reject killpg(..., 0) while a group is exiting. A signal
-        # probe is not evidence that its members have released their sockets.
+    def discover_members() -> None:
         for pid in psutil.pids():
+            if pid in members or pid in unresolved:
+                continue
             try:
                 if os.getpgid(pid) != pgid:  # windows-footgun: ok — Windows returns above
                     continue
             except (ProcessLookupError, PermissionError):
                 continue
+            unresolved.add(pid)
+        for pid in tuple(unresolved):
             try:
-                if psutil.Process(pid).status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
-                    return True
+                member = psutil.Process(pid)
             except psutil.NoSuchProcess:
+                unresolved.discard(pid)
                 continue
             except psutil.AccessDenied:
-                return True  # An unobservable owned member is not proof of exit.
-        return False
+                continue  # Ownership is known, but no stable identity exists yet.
+            try:
+                current_group = os.getpgid(pid)  # windows-footgun: ok — Windows returns above
+            except (ProcessLookupError, PermissionError):
+                # Do not adopt a possibly recycled PID without confirming its
+                # group. A vanished group lookup alone is not proof of exit.
+                try:
+                    if not member.is_running() or member.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                        unresolved.discard(pid)
+                except psutil.NoSuchProcess:
+                    unresolved.discard(pid)
+                except psutil.AccessDenied:
+                    pass
+                continue
+            if current_group == pgid:
+                members[pid] = member
+            # A replacement in another group has no ownership relationship to
+            # the original member whose identity we could not observe.
+            unresolved.discard(pid)
+
+    def live_members() -> bool:
+        # Discover children created during graceful shutdown, but do not forget
+        # known members when Darwin's group lookup vanishes before file/socket
+        # teardown. psutil's retained identity also detects PID reuse.
+        discover_members()
+        live = bool(unresolved)
+        for pid, member in tuple(members.items()):
+            try:
+                if not member.is_running() or member.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                    del members[pid]
+                    continue
+            except psutil.NoSuchProcess:
+                del members[pid]
+                continue
+            except psutil.AccessDenied:
+                pass  # An unobservable owned member is not proof of exit.
+            live = True
+        return live
 
     def wait_for_group(timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -207,11 +247,12 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
                 return False
             time.sleep(min(0.02, remaining))
 
+    # Establish identity before our signal starts Darwin's early PID removal.
+    discover_members()
     try:
         os.killpg(pgid, signal.SIGTERM)  # windows-footgun: ok — Windows returns above
     except ProcessLookupError:
-        proc.poll()
-        return
+        pass  # Known members may still be releasing their resources.
     if not wait_for_group(_PROCESS_TERMINATE_GRACE):
         try:
             os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — Windows returns above

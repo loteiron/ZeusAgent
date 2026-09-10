@@ -26,8 +26,9 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process-group sig
         ("wrapper-exits", None),
         ("ignore-term", PermissionError),
         ("ignore-term", ProcessLookupError),
+        ("lookup-disappears", None),
     ],
-    ids=["delayed-exit", "ignore-term", "wrapper-exits", "probe-permission", "probe-missing"],
+    ids=["delayed-exit", "ignore-term", "wrapper-exits", "probe-permission", "probe-missing", "lookup-disappears"],
 )
 def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, monkeypatch, behavior, group_probe_error):
     if group_probe_error:
@@ -42,6 +43,23 @@ def test_verification_waits_for_the_server_after_its_wrapper_exits(tmp_path, mon
             return actual_killpg(pgid, sig)
 
         monkeypatch.setattr(os, "killpg", unavailable_probe)
+    if behavior == "lookup-disappears":
+        actual_getpgid, actual_killpg = os.getpgid, os.killpg
+        signalled = set()
+
+        def exiting_group_lookup(pid):
+            if pid in signalled:
+                raise ProcessLookupError("Darwin hides an exiting PID before releasing its listener")
+            return actual_getpgid(pid)
+
+        def signal_then_hide_lookup(pgid, sig):
+            result = actual_killpg(pgid, sig)
+            if sig == signal.SIGTERM:
+                signalled.add(int((tmp_path / "child.pid").read_text(encoding="utf-8")))
+            return result
+
+        monkeypatch.setattr(os, "getpgid", exiting_group_lookup)
+        monkeypatch.setattr(os, "killpg", signal_then_hide_lookup)
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

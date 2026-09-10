@@ -63,6 +63,7 @@ jobs:
           tests/scripts/test_footgun_subprocess_encoding.py tests/scripts/test_windows_footguns_full_repo_scan.py
           tests/ci/test_stage_windows_release.py tests/ci/test_stage_linux_release.py tests/ci/test_zeus_workflow.py
           tests/test_verify_http_readiness.py tests/verify/test_runner_process_group_cleanup.py tests/verify/test_process_cleanup_trace.py
+          tests/verify/test_runner_member_identity.py
           tests/gateway/test_kanban_wake_acceptance.py tests/zeus_cli/test_hermes_import_titles.py -- --tb=short -ra
       - name: Run isolated Python tests without retries
         run: |
@@ -143,6 +144,7 @@ jobs:
           tests/agent/test_verification_stop.py tests/tools/test_process_verification_completion_lock.py
           tests/verify/test_environment_and_runner.py tests/verify/test_ledger_and_nudge_integration.py
           tests/verify/test_runner_cancellation.py tests/verify/test_runner_process_group_cleanup.py
+          tests/verify/test_runner_member_identity.py
           tests/verify/test_evidence_commands.py tests/tui_gateway/test_verification_controls.py
           tests/zeus_cli/test_goal_workspace_evidence.py tests/zeus_cli/test_goal_workspace_safety.py
           tests/zeus_cli/test_goal_control_races.py
@@ -168,7 +170,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: process-cleanup-${{ matrix.os }}
-          path: ${{ runner.temp }}/zeus-cleanup-diagnostics/*.json
+          path: .pytest_cache/zeus-cleanup-diagnostics/*.json
           if-no-files-found: ignore
           retention-days: 14
 

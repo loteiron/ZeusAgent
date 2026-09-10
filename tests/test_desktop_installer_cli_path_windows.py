@@ -30,6 +30,7 @@ $ErrorActionPreference = "Stop"
 Trace-Stage "module import begin"
 Import-Module $ModulePath -Force
 Trace-Stage "module import complete"
+$PSModuleAutoLoadingPreference = 'None'
 $testRoot = "Software\ZeusAgent\InstallerTests\" + [Guid]::NewGuid().ToString("N")
 $environmentKey = "$testRoot\Environment"
 $registrationKey = "$testRoot\Registration"
@@ -44,6 +45,15 @@ function Change([string]$Action) {
 }
 function Read-Path {
     $envKey.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+}
+function Write-Result([hashtable]$Value) {
+    # The fixture invokes Windows PowerShell/.NET Framework explicitly. Avoid
+    # cold Utility module discovery for ConvertTo-Json after registry work.
+    Trace-Stage "result serialization begin"
+    [void][Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+    $serializer = [System.Web.Script.Serialization.JavaScriptSerializer]::new()
+    [Console]::WriteLine($serializer.Serialize($Value))
+    Trace-Stage "result serialization complete"
 }
 try {
 ''' + body + r'''
@@ -83,7 +93,7 @@ def test_install_repair_uninstall_preserves_long_path_and_later_user_edits(tmp_p
     $repaired = Read-Path
     $envKey.SetValue("Path", "$repaired;C:\AddedLater", [Microsoft.Win32.RegistryValueKind]::ExpandString)
     Change "Uninstall"
-    @{ before=$before; installed=$installed; repaired=$repaired; after=(Read-Path); bin=$bin; kind=$envKey.GetValueKind("Path").ToString() } | ConvertTo-Json -Compress
+    Write-Result @{ before=$before; installed=$installed; repaired=$repaired; after=(Read-Path); bin=$bin; kind=$envKey.GetValueKind("Path").ToString() }
 ''')
     assert len(result["before"]) > 1024
     assert result["installed"] == result["before"] + ";" + result["bin"]
@@ -109,7 +119,7 @@ def test_uninstall_preserves_preexisting_entry_and_restores_missing_path(tmp_pat
     Change "Uninstall"
     $retained = $discovery.GetValue("InstallDirectory")
     $discovery.Dispose()
-    @{ before=$before; preserved=$preserved; kind=$kind; installed=$installed; bin=$bin; removed=$null -eq (Read-Path); discovered=$discovered; install=$InstallDirectory; retained=$retained } | ConvertTo-Json -Compress
+    Write-Result @{ before=$before; preserved=$preserved; kind=$kind; installed=$installed; bin=$bin; removed=$null -eq (Read-Path); discovered=$discovered; install=$InstallDirectory; retained=$retained }
 ''')
     assert result["preserved"] == result["before"]
     assert result["kind"] == "String"
@@ -131,7 +141,7 @@ def test_path_registration_does_not_require_management_module_autoload(tmp_path:
     } finally {
         $PSModuleAutoLoadingPreference = 'All'
     }
-    @{ installed=$installed; after=$after; bin=$bin } | ConvertTo-Json -Compress
+    Write-Result @{ installed=$installed; after=$after; bin=$bin }
 ''')
     assert result["installed"] == "C:\\Tools;" + result["bin"]
     assert result["after"] == r"C:\Tools"
