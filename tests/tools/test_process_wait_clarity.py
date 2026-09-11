@@ -1,6 +1,10 @@
 """Tests for process wait timeout-result clarity (not-an-error semantics)."""
 
 import pytest
+import shlex
+import sys
+import tempfile
+from pathlib import Path
 
 from tools.process_registry import ProcessRegistry
 
@@ -12,9 +16,15 @@ def registry(tmp_path, monkeypatch):
 
 
 def _spawn_sleeper(registry, notify=False):
-    session = registry.spawn_local("sleep 30", cwd="/tmp", task_id="t-waitclar")
+    session = registry.spawn_local(_python_command("import time; time.sleep(30)"),
+                                   cwd=tempfile.gettempdir(), task_id="t-waitclar")
     session.notify_on_complete = notify
     return session.id
+
+
+def _python_command(code):
+    # The local registry deliberately runs a POSIX shell, including Git Bash on Windows.
+    return shlex.join([Path(sys.executable).as_posix(), "-c", code])
 
 
 class TestWaitTimeoutClarity:
@@ -58,7 +68,50 @@ class TestWaitTimeoutClarity:
             registry.kill_process(sid)
 
     def test_exited_process_unaffected(self, registry):
-        session = registry.spawn_local("true", cwd="/tmp", task_id="t-waitclar")
+        session = registry.spawn_local(_python_command("pass"), cwd=tempfile.gettempdir(), task_id="t-waitclar")
         r = registry.wait(session.id, timeout=10)
         assert r["status"] == "exited"
         assert "process_running" not in r
+
+
+class TestWaitYieldRelease:
+    """A mid-turn steer/redirect (request_yield on the tool-worker tid) releases a
+    process wait instead of parking the user's message behind it (kimi-code#3697 class)."""
+
+    def test_yield_releases_wait_and_keeps_process_running(self, registry):
+        import threading
+        import time
+
+        from tools.interrupt import request_yield
+
+        sid = _spawn_sleeper(registry)
+        try:
+            result = {}
+
+            def waiter():
+                result["r"] = registry.wait(sid, timeout=15)
+
+            t = threading.Thread(target=waiter)
+            t.start()
+            time.sleep(0.3)
+            request_yield(t.ident)
+            t.join(5)
+            assert not t.is_alive(), "wait did not release within 5s of the yield request"
+            r = result["r"]
+            assert r["status"] == "interrupted"
+            assert r["process_running"] is True
+            assert "still running" in r["note"]
+            # The process was not killed and the yield bit was consumed.
+            assert registry.poll(sid)["status"] == "running"
+            from tools.interrupt import is_thread_yield_requested
+            assert not is_thread_yield_requested(t.ident)
+        finally:
+            registry.kill_process(sid)
+
+    def test_wait_without_yield_still_times_out(self, registry):
+        sid = _spawn_sleeper(registry)
+        try:
+            r = registry.wait(sid, timeout=1)
+            assert r["status"] == "timeout"
+        finally:
+            registry.kill_process(sid)
