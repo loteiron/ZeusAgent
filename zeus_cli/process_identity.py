@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+from utils import atomic_json_write
+
 logger = logging.getLogger(__name__)
 
 SPAWN_ENV_VAR = "ZEUS_SPAWN"
@@ -266,9 +268,8 @@ def _append_entry(entry: LedgerEntry) -> bool:
                 and _pid_alive_matches(e["pid"], e.get("create_time")) is not False
             ]
             pruned.append(asdict(entry))
-            tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
-            tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
-            os.replace(tmp, path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_json_write(path, pruned, mode=0o600)
             return True
     except (OSError, RuntimeError):
         logger.debug("spawn ledger update failed", exc_info=True)
