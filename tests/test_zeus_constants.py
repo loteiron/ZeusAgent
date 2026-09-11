@@ -33,6 +33,7 @@ from zeus_constants import (
 class TestGetDefaultZeusAgentRoot:
     """Tests for get_default_zeus_root() — Docker/custom deployment awareness."""
 
+    @pytest.mark.linux_only
     def test_no_zeus_home_returns_native(self, tmp_path, monkeypatch):
         """When ZEUS_HOME is not set, returns ~/.zeus."""
         monkeypatch.delenv("ZEUS_HOME", raising=False)
@@ -759,7 +760,10 @@ class TestGetZeusAgentDir:
         """
         self._set_home(tmp_path, monkeypatch)
         legacy = tmp_path / "pairing"
-        legacy.symlink_to(tmp_path / "does-not-exist")
+        try:
+            legacy.symlink_to(tmp_path / "does-not-exist")
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"Symlink not supported on this platform/permission: {exc}")
         new = tmp_path / "platforms" / "pairing"
         new.mkdir(parents=True)
         (new / "discord-approved.json").write_text("[]")
@@ -773,7 +777,10 @@ class TestGetZeusAgentDir:
         real.mkdir()
         (real / "cached.png").write_bytes(b"x")
         legacy = tmp_path / "image_cache"
-        legacy.symlink_to(real)
+        try:
+            legacy.symlink_to(real)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"Symlink not supported on this platform/permission: {exc}")
         result = get_zeus_dir("cache/images", "image_cache")
         assert result == legacy
 
