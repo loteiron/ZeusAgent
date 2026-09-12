@@ -248,6 +248,12 @@ async def _resolve_gateway_status(profile_dir: Optional[Path], health_url) -> Di
     # Prefer the detailed health endpoint response (has full state) when the local runtime
     # status file is absent or stale (cross-container).
     runtime = local_runtime
+    if liveness.source == "multiplexer":
+        from gateway.status import _profile_name_for_home, profile_platforms_from_multiplexer
+        from zeus_constants import get_process_zeus_home
+        name = _profile_name_for_home(profile_dir or get_process_zeus_home())
+        runtime = {**(liveness.runtime or {}), "platforms":
+                   profile_platforms_from_multiplexer(liveness.runtime, name or "")}
     if runtime is None and remote_health_body and remote_health_body.get("gateway_state"):
         runtime = remote_health_body
 
@@ -275,9 +281,8 @@ async def _resolve_gateway_status(profile_dir: Optional[Path], health_url) -> Di
     if gateway_running and gateway_state is None and remote_health_body is not None:
         gateway_state = "running"
 
-    # ``liveness.runtime`` is set only when the shared multiplexer answered for a served profile: its
-    # gateway IS that process, so name every bot a restart would blip ("default, alpha, beta").
-    served = (liveness.runtime or {}).get("served_profiles")
+    # Both the default gateway and a served profile address the shared process on restart.
+    served = (liveness.runtime or runtime or {}).get("served_profiles") if gateway_running else None
     return {
         "runtime": runtime, "gateway_running": gateway_running, "gateway_pid": liveness.pid,
         "gateway_state": gateway_state, "gateway_platforms": gateway_platforms,

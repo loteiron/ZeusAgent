@@ -807,6 +807,9 @@ def write_runtime_status(
     previous_payload = copy.deepcopy(payload)
     current_record = _build_pid_record()
     payload.setdefault("platforms", {})
+    if clear_profile_platforms:
+        # Startup must not inherit a previous process's served set when multiplexing was disabled.
+        payload["served_profiles"] = []
     if clear_profile_platforms or drop_profile_platforms:
         # Secondary-profile entries are keyed ``<profile>:<platform>``. A fresh process must not
         # inherit them or /api/status stays degraded until every old adapter re-emits.
@@ -1038,6 +1041,15 @@ def resolve_gateway_liveness(
     if runtime_pid is not None:
         return GatewayLiveness(
             running=True, pid=runtime_pid, source="runtime_status", health_body=health_body
+        )
+    # Pooled Desktop backends serve their own named profile without a query selector.
+    own_home = profile_dir if scoped else _get_process_zeus_home()
+    served = guarded(multiplexer_liveness_for_profile, own_home)
+    if served is not None:
+        mux_pid, mux_runtime = served
+        return GatewayLiveness(
+            running=True, pid=mux_pid, source="multiplexer", health_body=health_body,
+            runtime=mux_runtime,
         )
     return GatewayLiveness(
         running=False, pid=None, source="none", health_body=health_body, probe_error=probe_error

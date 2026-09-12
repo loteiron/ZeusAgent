@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "zeus_base": "559a6d3f48d7d77cf64b2719f7fa7ff659a829d8",
+  "upstream_base": "53c57871d67ee7d2202861aacc4ea0ef6ef93112",
+  "upstream_target": "d595e636c83aa0b9606d4e914e1140ae9c796897",
+  "commits_reviewed": 181,
+  "date": "2026-09-13",
+  "scope": "Incremental port of this commit range, preserving Zeus extensions; not a full upstream tree replacement."
+}

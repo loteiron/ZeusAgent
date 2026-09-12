@@ -60,3 +60,37 @@ def test_messaging_card_for_a_served_profile_reads_connected_not_restart_needed(
     assert payload["gateway_running"] is True
     assert payload["state"] == "connected", payload
     assert payload["ingress_url"] == "http://127.0.0.1:45719/p/alpha/v1"
+
+
+@pytest.mark.asyncio
+async def test_default_gateway_also_lists_the_profiles_its_restart_affects(served_root, monkeypatch):
+    from zeus_cli.web_routers import status
+    monkeypatch.setattr(status, "get_running_pid_cached", lambda *a, **k: os.getpid())
+    monkeypatch.setattr(status, "_load_configured_gateway_platforms", lambda: {"api_server"})
+    payload = await status._resolve_gateway_status(served_root, None)
+    assert payload["gateway_running"] is True
+    assert payload["gateway_shared_with"] == ["default", "alpha", "beta"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verb", ["start", "stop"])
+async def test_served_profile_rest_lifecycle_refuses_before_spawning(served_root, monkeypatch, verb):
+    from fastapi import HTTPException
+    from zeus_cli.web_routers import ops
+    monkeypatch.setattr(ops, "_spawn_zeus_action", lambda *a, **k: pytest.fail("must not spawn"))
+    with pytest.raises(HTTPException) as error:
+        await getattr(ops, f"{verb}_gateway")("alpha")
+    assert error.value.status_code == 409
+    assert "alpha" in error.value.detail and "multiplexer" in error.value.detail
+
+
+def test_profile_restart_child_does_not_inherit_the_dashboard_credentials(served_root, monkeypatch):
+    from zeus_cli.web_server_gateway import _profile_action_environment
+    (served_root / ".env").write_text("PRIVATE_SERVICE_ALIAS=fixture-root-secret\n", encoding="utf-8")
+    monkeypatch.setenv("PRIVATE_SERVICE_ALIAS", "fixture-root-secret")
+    monkeypatch.setenv("_ZEUS_GATEWAY", "1")
+    child = _profile_action_environment(["-p", "alpha", "gateway", "restart"])
+    assert "PRIVATE_SERVICE_ALIAS" not in child
+    assert "_ZEUS_GATEWAY" not in child
+    assert child["ZEUS_HOME"] == str(served_root / "profiles" / "alpha")
+    assert child["ZEUS_NONINTERACTIVE"] == "1"

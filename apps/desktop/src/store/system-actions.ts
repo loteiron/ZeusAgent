@@ -24,13 +24,15 @@ async function awaitAction(started: ActionResponse): Promise<void> {
     const status = await getActionStatus(started.name, POLL_TIMEOUT_S)
 
     if (!status.running) {
-      if (status.exit_code != null && status.exit_code !== 0) {
+      if (status.exit_code !== 0) {
         throw new Error(translateNow('commandCenter.gatewayRestartFailed'))
       }
 
       return
     }
   }
+
+  throw new Error('Gateway restart has not finished. Check its status before retrying.')
 }
 
 // Under `gateway.multiplex_profiles` the profile in view has no gateway of its

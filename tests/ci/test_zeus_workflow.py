@@ -22,6 +22,7 @@ def test_active_ci_permissions_are_pinned_and_draft_access_is_isolated():
         ),
         "zeus-linux-cli.yml": ({"workflow_dispatch"}, {"contents": "read"}),
         "zeus-linux-installer.yml": ({"workflow_dispatch"}, {"contents": "read"}),
+        "zeus-upstream-sync.yml": ({"push", "workflow_dispatch"}, {"contents": "read"}),
         # The install jobs download the build job's artifact with the Actions API.
         "zeus-linux-package.yml": (
             {"workflow_dispatch"}, {"contents": "read", "actions": "read"},

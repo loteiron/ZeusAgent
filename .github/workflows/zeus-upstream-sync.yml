@@ -1,0 +1,58 @@
+name: ZeusAgent upstream integration
+
+on:
+  push:
+    branches: [zeus-engineering]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regressions:
+    name: Ubuntu · upstream and Zeus regression contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.11.33'
+          enable-cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Install isolated test dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install --yes ripgrep
+          uv sync --locked --python 3.12 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web --extra messaging --extra wecom
+      - name: Run the changed tests and Zeus contracts without retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=$(python3 -c 'import json; print(json.load(open("upstream-sync.json"))["zeus_base"])')
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$base^{commit}"
+          mapfile -t tests < <(git diff --name-only --diff-filter=ACM "$base" HEAD -- tests | awk '/(^|\/)test_[^/]+\.py$/')
+          test "${#tests[@]}" -gt 0
+          bash scripts/run_tests.sh -j 4 --file-timeout 300 --file-retries 0 "${tests[@]}" \
+            tests/gateway/test_telegram_command_integrity.py tests/gateway/test_telegram_session_controls.py \
+            tests/zeus_cli/test_hermes_import.py tests/tui_gateway/test_hermes_migration.py \
+            tests/zeus_cli/test_goal_workspace_evidence.py tests/zeus_cli/test_goal_control_races.py \
+            tests/agent/test_workspace_identity.py tests/agent/test_verification_revision.py \
+            tests/zeus_cli/test_process_ledger_persistence.py \
+            tests/scripts/test_windows_footguns_full_repo_scan.py -- --tb=short -ra | tee integration-tests.log
+      - name: Retain the actual test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: upstream-integration-results
+          path: integration-tests.log
+          retention-days: 14

@@ -221,6 +221,11 @@ def _render_gateway(ctx):
     try:
         from zeus_cli.gateway import get_gateway_runtime_snapshot, _format_gateway_pids
         snapshot = get_gateway_runtime_snapshot()
+        from zeus_cli.gateway import named_profile_served_by_running_multiplexer
+        if not snapshot.running and named_profile_served_by_running_multiplexer():
+            _kv_flag("Status:", True, "running via default-profile multiplexer", "stopped")
+            _kv("Manage with:", "zeus -p default gateway status")
+            return
         _kv_flag("Status:", snapshot.running, "running", "stopped")
         _kv("Manager:", snapshot.manager)
         if snapshot.gateway_pids:

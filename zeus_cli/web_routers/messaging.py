@@ -208,12 +208,18 @@ def _messaging_platform_payload(
     # scoped to a named profile: gateway/status readers resolve process-level paths
     # and do NOT follow the ZEUS_HOME contextvar override, so without it messaging
     # silently reports another profile's gateway.
-    gateway_running = resolve_gateway_liveness(
+    liveness = resolve_gateway_liveness(
         profile_dir=profile_home, runtime=runtime,
         health_probe=_probe_gateway_health if _GATEWAY_HEALTH_URL else None,
         pid_probe=get_running_pid_cached, runtime_reader=read_runtime_status,
         runtime_pid_probe=get_runtime_status_running_pid,
-    ).running
+    )
+    gateway_running = liveness.running
+    if liveness.source == "multiplexer":
+        from gateway.status import _profile_name_for_home, profile_platforms_from_multiplexer
+        from zeus_constants import get_process_zeus_home
+        name = _profile_name_for_home(profile_home or get_process_zeus_home())
+        runtime_platform = profile_platforms_from_multiplexer(liveness.runtime, name or "").get(platform_id, {})
 
     def env_value(key: str) -> str:
         # Profile-scoped: judge only the profile's own .env — the dashboard process's
@@ -252,6 +258,7 @@ def _messaging_platform_payload(
         "gateway_running": gateway_running, "state": state, "error_code": error_code,
         "error_message": error_message, "updated_at": runtime_platform.get("updated_at"),
         "home_channel": home_channel, "env_vars": env_vars,
+        "ingress_url": runtime_platform.get("ingress_url"),
     }
     if platform_id == "whatsapp":
         whatsapp_mode = env_value("WHATSAPP_MODE").strip()
@@ -880,12 +887,13 @@ def _notify_multiplexer_hot_serve(profile: Optional[str]) -> bool:
     """True when a live multiplexer serves the written profile and was told to rebuild its adapters.
     Unscoped (no ``?profile=``) means THIS process's profile: Desktop routes a pooled
     ``zeus --profile X serve`` without the query (#109088), so X must resolve here too."""
-    from zeus_cli.gateway import _current_profile_name, named_profile_served_by_running_multiplexer
+    from zeus_cli.gateway import _profile_suffix, named_profile_served_by_running_multiplexer
     from zeus_cli.gateway_multiplex_served import notify_multiplexer_profiles_changed
-    name = (profile or "").strip() or _current_profile_name()
+    name = (profile or "").strip() or _profile_suffix()
     if not name or name == "default" or not named_profile_served_by_running_multiplexer(name):
         return False
-    return notify_multiplexer_profiles_changed(name) is not None
+    served = notify_multiplexer_profiles_changed(name)
+    return served is not None and name in served
 
 
 @router.post("/api/messaging/platforms/{platform_id}/test")

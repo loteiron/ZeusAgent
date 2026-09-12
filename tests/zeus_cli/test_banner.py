@@ -91,7 +91,7 @@ def test_custom_hero_alignment_is_stable_across_terminal_widths():
     import io
     from zeus_cli.skin_engine import SkinConfig
 
-    skin = SkinConfig(banner_hero="[green]\u2800X[/]", banner_logo="")
+    skin = SkinConfig(name="custom", banner_hero="[green]\u2800X[/]", banner_logo="")
     indents = []
     with (
         patch.object(model_tools, "check_tool_availability", return_value=([], [])),

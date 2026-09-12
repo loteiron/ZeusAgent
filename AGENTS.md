@@ -10,6 +10,9 @@ past that); see the **routing table** at the end and read the area file before e
 ## ZeusAgent source-fork overrides
 
 - `.github/workflows/zeus-ci.yml` runs read-only source checks. The manually
+  dispatched `zeus-upstream-sync.yml` also runs on `zeus-engineering` pushes and
+  tests the range in `upstream-sync.json` on a GitHub-hosted Ubuntu runner, with
+  read-only repository permissions and no server deployment. The manually
   dispatched `zeus-linux-package.yml` and `zeus-linux-cli.yml` workflows validate
   Ubuntu packages and release commands. Their installation jobs remain read-only.
   The manual CLI workflow's isolated draft-download job needs `contents: write`

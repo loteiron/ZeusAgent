@@ -23,6 +23,22 @@ Zeus namespace changes and regression coverage:
 - Skills guard DNS-exfiltration false-positive correction, by Teknium:
   https://github.com/NousResearch/hermes-agent/commit/596bd8fec6108d5e91e313c2225f5bf0df0051b8
 
+The September 13 integration reviews and ports all 181 commits after
+`53c57871d67ee7d2202861aacc4ea0ef6ef93112` through
+`d595e636c83aa0b9606d4e914e1140ae9c796897`. Git preserves each upstream author,
+co-author trailers, and an `Upstream-Commit` reference. `upstream-sync.json`
+records the exact range and the preceding Zeus revision.
+
+This is an incremental adaptation, not a claim that every earlier upstream
+change is present. Necessary shared-gateway lifecycle/status helpers were
+adapted from the same target snapshot. Hermes logo-only changes are represented
+by attributed empty commits because Zeus already has its own mark; terminal
+alignment is verified against Zeus's layout. The installer mock context-size
+change is applied to Zeus's existing Desktop mock launcher rather than adding
+an unused second fixture. Inherited automation remains inactive under
+`.github/upstream-workflows/`; the Zeus upstream-integration workflow only runs
+tests in GitHub-hosted environments and does not deploy to user servers.
+
 The original MIT license in `LICENSE` is preserved verbatim. Copyright notices,
 contributor credits, third-party licenses, external service identities and model IDs
 remain their respective owners' property. Renaming does not replace these obligations.

@@ -150,6 +150,7 @@ class TestDisabledSkillsJsonArrayString:
 def test_skill_config_home_vars_use_subprocess_home(tmp_path, monkeypatch):
     """``~`` / ``$HOME`` / ``${HOME}`` defaults resolve against the HOME tools receive, not the
     control process HOME; other variables keep normal expansion (#12260)."""
+    from pathlib import Path
     from agent import skill_utils
 
     # A backslash in the home path must not be read as a regex-replacement escape.
@@ -172,11 +173,11 @@ def test_skill_config_home_vars_use_subprocess_home(tmp_path, monkeypatch):
         {"key": "wiki.tilde_var", "default": "~/$LEAF"},
     ])
 
-    assert resolved["wiki.home_var"] == str(subprocess_home / "wiki")
-    assert resolved["wiki.braced_home"] == str(subprocess_home / "notes")
-    assert resolved["wiki.tilde"] == str(subprocess_home / "scratch")
+    assert Path(resolved["wiki.home_var"]) == subprocess_home / "wiki"
+    assert Path(resolved["wiki.braced_home"]) == subprocess_home / "notes"
+    assert Path(resolved["wiki.tilde"]) == subprocess_home / "scratch"
     assert resolved["wiki.other_var"] == "/proj/cache"
-    assert resolved["wiki.tilde_var"] == str(subprocess_home / "leaf")
+    assert Path(resolved["wiki.tilde_var"]) == subprocess_home / "leaf"
 
 
 def test_iter_skill_index_files_prunes_skill_support_dirs(tmp_path):
@@ -409,4 +410,3 @@ class TestBOMToleranceSiblingSites:
         fm = _split_frontmatter("\ufeff---\nname: bp\n---\nbody")
         assert fm is not None
         assert fm.get("name") == "bp"
-

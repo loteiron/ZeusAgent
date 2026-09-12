@@ -78,6 +78,20 @@ def _served_record(home):
     return json.loads((home / "gateway_state.json").read_text(encoding="utf-8")).get("served_profiles")
 
 
+def test_cron_enumerator_observes_profiles_created_after_start(tmp_path, monkeypatch):
+    import gateway.run as gateway_run
+    runner, home = _runner(tmp_path, monkeypatch)
+    _mkprofile(home, "alpha")
+    enumerate_now = lambda: gateway_run._cron_tick_profile_homes(runner.config)
+    with patch("zeus_cli.profiles.get_active_profile_name", return_value="default"):
+        first = dict(enumerate_now())
+        assert first["alpha"] == home / "profiles" / "alpha"
+        _mkprofile(home, "beta")
+        second = dict(enumerate_now())
+        assert second["beta"] == home / "profiles" / "beta"
+        assert second["default"] == first["default"]
+
+
 @pytest.mark.asyncio
 async def test_created_then_credentialed_profile_is_served_without_restart(tmp_path, monkeypatch):
     runner, home = _runner(tmp_path, monkeypatch)

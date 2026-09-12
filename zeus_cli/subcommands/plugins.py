@@ -101,6 +101,13 @@ def build_plugins_parser(subparsers, *, cmd_plugins: Callable) -> None:
     plugins_doctor.add_argument(
         "--ci", action="store_true", help="Exit non-zero when validation reports an error")
 
+    plugins_validate = plugins_subparsers.add_parser(
+        "validate", help="Check a plugin manifest and probe declared capabilities",
+        description="Validate a plugin directory for catalog admission. Native plugins are "
+            "imported in a temporary child process; this is not a sandbox. Validate trusted code only.")
+    plugins_validate.add_argument("path", nargs="?", default=".", help="Plugin directory")
+    add_json_flag(plugins_validate, "Print checks as JSON; exit non-zero on validation errors")
+
     plugins_compat = plugins_subparsers.add_parser(
         "compat",
         help="Show installed plugins that import paths removed by the Sep 2026 decomposition",

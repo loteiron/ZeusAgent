@@ -1594,6 +1594,20 @@ def _multiplex_profile_homes(config: object) -> list[tuple[str, "Path"]]:
         multiplex=True, profile_allowlist=getattr(config, "multiplex_profile_allowlist", None)))
 
 
+def _cron_tick_profile_homes(config: object) -> list[tuple[str, "Path"]]:
+    """Re-enumerate served homes each tick, including an active profile outside profiles/."""
+    from zeus_cli.profiles import get_active_profile_name, get_profile_dir
+
+    homes = _multiplex_profile_homes(config)
+    active = get_active_profile_name() or "default"
+    if any(name == active for name, _home in homes):
+        return homes
+    try:
+        return homes + [(active, get_profile_dir(active))]
+    except Exception:
+        return homes
+
+
 def _enable_multiplex_log_routing(config: object) -> bool:
     """Route agent.log/errors.log/gateway.log records to their owning profile (inert single-profile).
     ``setup_logging(mode="gateway")`` binds file handlers to the launch home, so under multiplexing

@@ -318,7 +318,7 @@ def test_credential_write_hot_serves_a_multiplexed_profile(client, isolated_prof
     monkeypatch.setattr(gateway_cli, "named_profile_served_by_running_multiplexer", lambda name=None: name == "worker_alpha")
     monkeypatch.setattr(served_mod, "notify_multiplexer_profiles_changed", lambda name, **kw: notified.append(name) or ["default", name])
     if topology == "pooled_unscoped":
-        monkeypatch.setattr(gateway_cli, "_current_profile_name", lambda: "worker_alpha")
+        monkeypatch.setattr(gateway_cli, "_profile_suffix", lambda: "worker_alpha")
         params = {}
     else:
         params = {"profile": "worker_alpha"}
@@ -336,6 +336,17 @@ def test_credential_write_on_default_profile_is_not_hot_served(client, isolated_
     monkeypatch.setattr(served_mod, "notify_multiplexer_profiles_changed",
                         lambda name, **kw: pytest.fail("default profile must not ping the multiplexer"))
     resp = client.put("/api/messaging/platforms/telegram",
+                      json={"enabled": True, "env": {"TELEGRAM_BOT_TOKEN": _VALID_WORKER_BOT_TOKEN}})
+    assert resp.status_code == 200
+    assert resp.json()["hot_served"] is False
+
+
+def test_profile_not_in_rescan_result_is_not_reported_as_applied_live(client, isolated_profiles, monkeypatch):
+    import zeus_cli.gateway as gateway_cli
+    import zeus_cli.gateway_multiplex_served as served_mod
+    monkeypatch.setattr(gateway_cli, "named_profile_served_by_running_multiplexer", lambda name=None: True)
+    monkeypatch.setattr(served_mod, "notify_multiplexer_profiles_changed", lambda name: ["default"])
+    resp = client.put("/api/messaging/platforms/telegram", params={"profile": "worker_alpha"},
                       json={"enabled": True, "env": {"TELEGRAM_BOT_TOKEN": _VALID_WORKER_BOT_TOKEN}})
     assert resp.status_code == 200
     assert resp.json()["hot_served"] is False

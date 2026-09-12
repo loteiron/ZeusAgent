@@ -5,8 +5,8 @@ This is the command the plugin-catalog admission CI (and the
 candidate plugin. It performs static manifest checks plus a
 subprocess-isolated capability probe: the plugin is imported and its
 ``register(ctx)`` called against a minimal recording stub context in a
-scratch child process (with a throwaway ``ZEUS_HOME``), so a crashing or
-malicious plugin cannot take down the CLI, and the *actually registered*
+scratch child process (with a throwaway ``ZEUS_HOME``), so a plugin crash
+does not terminate the CLI. This is not a security sandbox. The *actually registered*
 tools/hooks/middleware are compared against the manifest's declared
 ``provides_*`` lists.
 """
@@ -74,19 +74,17 @@ class ValidationReport:
 def _requires_zeus_spec_valid(spec: str) -> bool:
     """Strictly validate a ``requires_zeus`` spec.
 
-    Unlike :func:`zeus_cli.plugins_manifest.version_satisfies` (permissive at load
-    time), validation REJECTS clauses whose version segment doesn't parse —
+    Validation rejects clauses whose version segment does not parse —
     a typo'd spec should fail admission, not silently gate nothing.
     """
-    from zeus_cli.plugins_manifest import _VERSION_COMPARATOR_RE, _version_tuple
-
     for clause in spec.split(","):
         clause = clause.strip()
         if not clause:
             continue
-        m = _VERSION_COMPARATOR_RE.match(clause)
+        m = re.match(r"^\s*(>=|<=|==|!=|>|<)\s*(.+?)\s*$", clause)
         target = m.group(2) if m else clause
-        if _version_tuple(target) is None:
+        numeric = re.split(r"[-+]", target.strip().lstrip("v"), 1)[0]
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", numeric):
             return False
     return True
 

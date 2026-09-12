@@ -4243,6 +4243,11 @@ def named_profile_served_by_running_multiplexer(profile_name: str | None = None)
         if not pid or not _pid_exists(pid):
             return False
 
+        from zeus_cli.gateway_multiplex_served import recorded_served_profiles
+        served = recorded_served_profiles(default_root)
+        if served is not None:
+            return suffix in served
+
         from gateway.config import _env_multiplex_profiles_override
         cfg_path = default_root / "config.yaml"
         cfg = {}
@@ -5928,6 +5933,7 @@ def _install_systemd_from_cli(args, *, force: bool, system: bool, run_as_user) -
 
 
 def _cmd_install(args):
+    _guard_named_profile_under_multiplexer(force=getattr(args, "force", False))
     if is_managed():
         managed_error("install gateway service")
         return
@@ -5968,6 +5974,7 @@ def _cmd_uninstall(args):
 
 
 def _cmd_start(args):
+    _guard_named_profile_under_multiplexer(force=getattr(args, "force", False))
     system = getattr(args, "system", False)
     start_all = getattr(args, "all", False)
     if not start_all and _dispatch_via_service_manager_if_s6("start"):
@@ -5989,6 +5996,8 @@ def _cmd_start(args):
 
 def _cmd_stop(args):
     _refuse_from_inside_gateway("stop", "restart loops")
+    if not getattr(args, "all", False) and not find_gateway_pids():
+        _guard_named_profile_under_multiplexer()
     stop_all = getattr(args, "all", False)
     system = getattr(args, "system", False)
     # Under s6 a bare pkill is seen as a crash and restarted; go through the supervisor.
@@ -6031,6 +6040,7 @@ def _restart_all(system: bool) -> None:
 
 def _cmd_restart(args):
     _refuse_from_inside_gateway("restart", "restart loops")
+    _guard_named_profile_under_multiplexer(force=getattr(args, "force", False))
     system = getattr(args, "system", False)
     restart_all = getattr(args, "all", False)
     if restart_all and _dispatch_all_via_service_manager_if_s6("restart"):

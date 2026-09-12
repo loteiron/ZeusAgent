@@ -64,6 +64,7 @@ def build_gateway_parser(
     gateway_start = gateway_subparsers.add_parser(
         "start", help="Start the installed systemd/launchd background service")
     _add_system_flag(gateway_start)
+    _flag(gateway_start, "--force", help="Start a separate gateway even when the multiplexer serves this profile")
     _flag(gateway_start, "--all",
         help="Kill ALL stale gateway processes across all profiles before starting")
     _add_compat_platform_flag(gateway_start)
@@ -74,6 +75,7 @@ def build_gateway_parser(
 
     gateway_restart = gateway_subparsers.add_parser("restart", help="Restart gateway service")
     _add_system_flag(gateway_restart)
+    _flag(gateway_restart, "--force", help="Restart a separate gateway even when the multiplexer serves this profile")
     _flag(gateway_restart, "--all",
         help="Kill ALL gateway processes across all profiles before restarting")
     _add_compat_platform_flag(gateway_restart)

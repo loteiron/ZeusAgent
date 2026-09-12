@@ -405,7 +405,10 @@ def cron_status():
                 gateway_alive_via_lock = is_gateway_runtime_lock_active()
                 lock_pid = get_running_pid() if gateway_alive_via_lock else None
                 pids = [lock_pid] if lock_pid else pids
-        if pids or gateway_alive_via_lock:
+        from zeus_cli.gateway import named_profile_served_by_running_multiplexer
+        if not pids and named_profile_served_by_running_multiplexer():
+            print(color("✓ Gateway is running via the default-profile multiplexer", Colors.GREEN))
+        elif pids or gateway_alive_via_lock:
             _print_ticker_health(pids)
         else:
             print(color("✗ Gateway is not running — cron jobs will NOT fire", Colors.RED))

@@ -2065,9 +2065,26 @@ _PLUGIN_ACTIONS = {
 }
 
 
+def cmd_validate(args) -> None:
+    """Expose catalog admission checks through the same CLI dispatcher as plugin management."""
+    from zeus_cli.plugin_validate import validate_plugin_dir
+
+    report = validate_plugin_dir(Path(args.path).expanduser().resolve())
+    if getattr(args, "json", False):
+        print(json.dumps(report.to_dict(), ensure_ascii=False))
+    else:
+        for name, ok, detail in report.checks:
+            print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}")
+        for warning in report.warnings:
+            print(f"WARN {warning}")
+    raise SystemExit(report.exit_code)
+
+
 def plugins_command(args) -> None:
     """Dispatch zeus plugins subcommands."""
     action = getattr(args, "plugins_action", None)
+    if action == "validate":
+        return cmd_validate(args)
     handler = _PLUGIN_ACTIONS.get(action)
     if handler is None:
         _fail(_console(), f"[red]Unknown plugins action: {action}[/red]")

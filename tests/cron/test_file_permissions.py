@@ -125,6 +125,7 @@ class TestSecureHelpers(unittest.TestCase):
         from cron.jobs import _secure_file
         _secure_file(Path("/nonexistent/path/file.json"))  # Should not raise
 
+    @unittest.skipIf(os.name == "nt", "POSIX container permission modes do not apply to Windows ACLs")
     def test_secure_dir_preserves_operator_mode_in_container(self):
         """A bind-mounted data dir shared with sibling containers must keep the operator's mode;
         an explicit ZEUS_HOME_MODE is still honored (#10757)."""

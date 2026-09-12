@@ -13,6 +13,14 @@ from gateway import status
 
 
 class TestGatewayPidState:
+    def test_fresh_gateway_does_not_reuse_former_served_profiles(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ZEUS_HOME", str(tmp_path))
+        status.write_runtime_status(gateway_state="running", served_profiles=["default", "old-profile"])
+        status.write_runtime_status(gateway_state="starting", clear_profile_platforms=True)
+        assert status.read_runtime_status()["served_profiles"] == []
+        status.write_runtime_status(served_profiles=["default", "current-profile"])
+        assert status.read_runtime_status()["served_profiles"] == ["default", "current-profile"]
+
     def test_write_pid_file_records_gateway_metadata(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ZEUS_HOME", str(tmp_path))
 
