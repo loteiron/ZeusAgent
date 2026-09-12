@@ -877,23 +877,26 @@ async def update_messaging_platform(platform_id: str, body: MessagingPlatformUpd
             "env_keys=%s cleared_keys=%s",
             platform_id, target_profile or "current", body.enabled, sorted(body.env), sorted(body.clear_env),
         )
-        # A live multiplexer serving this named profile builds the adapter from the new token now
-        # (its periodic rescan would otherwise pick it up within a cycle); no gateway restart.
-        hot_served = await asyncio.to_thread(_notify_multiplexer_hot_serve, target_profile)
+        # A newly credentialed bot can start now; changes to an already running
+        # adapter still require a restart. Only acknowledge an actual new connection.
+        hot_served = await asyncio.to_thread(_notify_multiplexer_hot_serve, target_profile, platform_id)
         return {"ok": True, "platform": platform_id, "hot_served": hot_served}
 
 
-def _notify_multiplexer_hot_serve(profile: Optional[str]) -> bool:
-    """True when a live multiplexer serves the written profile and was told to rebuild its adapters.
+def _notify_multiplexer_hot_serve(profile: Optional[str], platform: str) -> bool:
+    """True when this rescan actually started the written profile's platform adapter.
     Unscoped (no ``?profile=``) means THIS process's profile: Desktop routes a pooled
     ``zeus --profile X serve`` without the query (#109088), so X must resolve here too."""
     from zeus_cli.gateway import _profile_suffix, named_profile_served_by_running_multiplexer
-    from zeus_cli.gateway_multiplex_served import notify_multiplexer_profiles_changed
+    from zeus_cli.gateway_multiplex_served import rescan_multiplexer_profiles
     name = (profile or "").strip() or _profile_suffix()
     if not name or name == "default" or not named_profile_served_by_running_multiplexer(name):
         return False
-    served = notify_multiplexer_profiles_changed(name)
-    return served is not None and name in served
+    result = rescan_multiplexer_profiles(name)
+    if result is None or name not in result.get("served_profiles", []):
+        return False
+    started = result.get("started_platforms")
+    return isinstance(started, dict) and platform in (started.get(name) or [])
 
 
 @router.post("/api/messaging/platforms/{platform_id}/test")

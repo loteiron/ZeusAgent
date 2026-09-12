@@ -39,6 +39,28 @@ and setup experience, with coordinated light and dark appearances.
 - **Pick your interface.** Use the same agent core from the desktop, CLI, Ink
   terminal UI, or web dashboard.
 
+## Recent source updates
+
+The September 13 integration adapts 181 upstream commits while retaining Zeus's
+interfaces, evidence workflow, Telegram controls, and migration tools. The exact
+range and attribution are recorded in [NOTICE.md](NOTICE.md) and
+[upstream-sync.json](upstream-sync.json).
+
+- Preserve custom-provider model IDs exactly and recover more reliably from
+  malformed tool arguments without switching to an unrelated provider.
+- Acknowledge messages while the agent is busy and handle rapid terminal input
+  without dropping the next submission.
+- Discover newly created multiplexed profiles and newly credentialed bots while
+  the gateway is running. Changes to an already connected bot still require a
+  restart; the settings UI reports that distinction.
+- Show which profiles share a gateway before restarting it, and release a
+  deleted profile's database handles without closing another profile's sessions.
+- Validate a trusted plugin with `zeus plugins validate PATH --json`, alongside
+  improvements to memory-provider consistency, MCP recovery, and scheduled jobs.
+
+These updates are available in the source tree. Packaged downloads below remain
+the separately versioned v0.22.0 release.
+
 ## Engineering workflow
 
 Use `/zeus-engineering <task>` for a workflow that establishes a baseline,

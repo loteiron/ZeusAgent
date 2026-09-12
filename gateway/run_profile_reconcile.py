@@ -116,6 +116,7 @@ class GatewayProfileReconcileMixin:
                 result["removed"].append(name)
             claimed = self._live_resource_claims(active)
             for name in added + changed:
+                before_platforms = set((getattr(self, "_profile_adapters", None) or {}).get(name, {}))
                 try:
                     connected = await self._start_one_profile_adapters(name, current[name], claimed)
                 except MultiplexConfigError as exc:
@@ -125,6 +126,10 @@ class GatewayProfileReconcileMixin:
                 except Exception:
                     logger.error("[MULTIPLEX] Failed to start adapters for profile '%s'", name, exc_info=True)
                     connected = 0
+                after_platforms = set((getattr(self, "_profile_adapters", None) or {}).get(name, {}))
+                started = sorted(platform.value for platform in after_platforms - before_platforms)
+                if started:
+                    result.setdefault("started_platforms", {})[name] = started
                 sigs[name] = profile_serve_signature(current[name])
                 if name in added:
                     logger.info("[MULTIPLEX] Now serving profile '%s' (%s adapter(s) connected; %s)", name, connected, reason)

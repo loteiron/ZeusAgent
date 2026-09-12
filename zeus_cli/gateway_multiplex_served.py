@@ -85,6 +85,16 @@ def notify_multiplexer_profiles_changed(profile_name: str, *, timeout: float = 8
     deleted) so it hot-serves / unroutes it now instead of at its next periodic rescan. Returns the
     served-profile list the gateway answered with, or None when no multiplexer answered (no live default
     gateway, single-profile gateway, or a gateway predating the verb). Never raises."""
+    answer = rescan_multiplexer_profiles(profile_name, timeout=timeout)
+    return answer["served_profiles"] if answer is not None else None
+
+
+def rescan_multiplexer_profiles(profile_name: str, *, timeout: float = 8.0) -> Optional[dict]:
+    """Return the acknowledged rescan, including which adapters actually started.
+
+    Being served is not evidence that an existing bot adopted changed credentials:
+    live adapters retain their configuration until a gateway restart.
+    """
     try:
         from zeus_constants import get_default_zeus_root
         from gateway.control_socket import rescan_gateway_profiles
@@ -97,4 +107,4 @@ def notify_multiplexer_profiles_changed(profile_name: str, *, timeout: float = 8
     if not isinstance(answer, dict) or answer.get("multiplex") is False:
         return None
     served = answer.get("served_profiles")
-    return [str(p) for p in served] if isinstance(served, list) else None
+    return {**answer, "served_profiles": [str(p) for p in served]} if isinstance(served, list) else None

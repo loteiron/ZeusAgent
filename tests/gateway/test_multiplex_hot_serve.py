@@ -114,6 +114,7 @@ async def test_created_then_credentialed_profile_is_served_without_restart(tmp_p
         (gamma_dir / ".env").write_text("DISCORD_BOT_TOKEN=gamma-token\n", encoding="utf-8")
         result = await runner.reconcile_served_profiles()
         assert result["rescanned"] == ["gamma"]
+        assert result["started_platforms"] == {"gamma": ["discord"]}
         assert runner._profile_adapters["gamma"][Platform.DISCORD].token.strip().endswith("gamma-token")
 
         # 3. A no-op rescan and the whole sequence never touched alpha's live adapter.
