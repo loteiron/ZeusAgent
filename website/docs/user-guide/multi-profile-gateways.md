@@ -541,6 +541,19 @@ grep -H 'TELEGRAM_BOT_TOKEN\|DISCORD_BOT_TOKEN' \
      ~/.zeus/.env ~/.zeus/profiles/*/.env
 ```
 
+## Profiles added while the gateway is running
+
+The served profile set is live. Creating a profile through the CLI, Desktop,
+dashboard or TUI asks the running multiplexer to rescan. A periodic rescan every
+30 seconds also picks up changes. Once the new profile has its own configured
+bot token, the gateway starts its adapters and updates the served-profile status.
+Existing profiles keep their connections and ongoing turns. Deleting a profile
+stops and removes its adapters. Duplicate bot credentials are rejected so a new
+profile cannot start a second poller for an existing token.
+
+The creation command confirms when the multiplexer picked up the profile. With
+an older gateway or an unavailable control socket, it shows the restart command.
+
 ## Updating the code
 
 `zeus update` pulls the latest code once and syncs new bundled skills into
