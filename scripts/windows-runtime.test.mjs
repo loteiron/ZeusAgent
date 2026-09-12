@@ -99,7 +99,8 @@ test('real extraction publishes once across concurrent bootstrap requests and re
   await writeFile(path.join(f.dir, 'uv.zip'), 'tampered uv');
   const events = [];
   const requests = await Promise.allSettled([1, 2].map(() => ensureWindowsRuntime({ ...f, onProgress: e => events.push(e) })));
-  assert.ok(requests.every(r => r.status === 'rejected' && /checksum/.test(r.reason.message)));
+  assert.ok(requests.every(r => r.status === 'rejected' && /checksum/.test(r.reason.message)),
+    JSON.stringify(requests.map(r => ({ status: r.status, error: r.reason?.message, code: r.reason?.code }))));
   assert.equal(await readFile(path.join(runtimeDir(f), 'source', 'zeus-agent', 'zeus'), 'utf8'), 'fixture source');
   assert.equal(events.filter(e => e.message === 'Preparing source').length, 1);
   await assert.rejects(readFile(path.join(runtimeDir(f), 'ready.json')), { code: 'ENOENT' });
@@ -114,6 +115,20 @@ test('a waiter can cancel without removing another process-owned lock', async t 
   await writeFile(path.join(lock, 'owner.json'), owner);
   await assert.rejects(ensureWindowsRuntime({ ...f, signal: AbortSignal.timeout(80) }), /abort/i);
   assert.equal(await readFile(path.join(lock, 'owner.json'), 'utf8'), owner);
+});
+
+test('an incomplete lock owner is waited on without parsing failure or lock theft', async t => {
+  const f = await fixture(t);
+  const lock = path.join(runtimeDir(f), 'bootstrap.lock');
+  await mkdir(lock, { recursive: true });
+  await writeFile(path.join(lock, 'owner.json'), '{');
+  const controller = new AbortController();
+  let waited = false;
+  await assert.rejects(ensureWindowsRuntime({ ...f, signal: controller.signal,
+    onProgress: ({ stage }) => { if (stage === 'waiting') { waited = true; controller.abort(); } },
+  }), /abort/i);
+  assert.equal(waited, true);
+  assert.equal(await readFile(path.join(lock, 'owner.json'), 'utf8'), '{');
 });
 
 test('cached resolver is read-only and retains caller configuration and workspace', async t => {

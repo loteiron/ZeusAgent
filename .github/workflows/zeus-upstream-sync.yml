@@ -64,6 +64,8 @@ jobs:
             tests/zeus_cli/test_process_ledger_persistence.py \
             tests/zeus_state/test_shared_session_db_registry.py \
             tests/scripts/test_windows_footguns_full_repo_scan.py -- --tb=short -ra | tee integration-tests.log
+      - name: Exercise the actual Linux runtime and npm launchers
+        run: node --test scripts/linux-runtime.test.mjs scripts/stage_zeus_npm.test.mjs
       - name: Retain the actual test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

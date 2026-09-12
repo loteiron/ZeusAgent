@@ -138,11 +138,17 @@ async function withLock(base, fn, signal, progress) {
       // A directory is published atomically. An incomplete owner file is never
       // stolen: crashing in that tiny window requires explicit recovery.
       await fs.mkdir(lock);
-      await fs.writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, token }));
+      await writeJson(path.join(lock, 'owner.json'), { pid: process.pid, token });
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      const owner = await readJson(path.join(lock, 'owner.json'));
+      let owner = null;
+      try { owner = await readJson(path.join(lock, 'owner.json')); }
+      catch (readError) {
+        // Older installers publish owner.json in place. An incomplete record
+        // is still an occupied lock: wait, and never steal or delete it.
+        if (!(readError instanceof SyntaxError)) throw readError;
+      }
       if (owner && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
         let dead = false;
         try { process.kill(owner.pid, 0); } catch (probe) { dead = probe.code === 'ESRCH'; }

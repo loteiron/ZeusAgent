@@ -186,6 +186,25 @@ test('a corrupt bundled uv asset never executes and releases the setup lock', { 
   } finally { await fs.rm(base, { recursive: true, force: true }); }
 });
 
+test('an incomplete lock owner is waited on without parsing failure or lock theft', { skip: process.platform !== 'linux' || process.getuid?.() === 0, timeout: 15000 }, async t => {
+  try { execFileSync('rg', ['--version']); } catch { return t.skip('ripgrep is a documented host prerequisite'); }
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'zeus-linux-lock-'));
+  const controller = new AbortController();
+  try {
+    const spec = manifest(), manifestPath = path.join(base, 'runtime-manifest.json'), runtimeBaseDir = path.join(base, 'runtimes');
+    await fs.writeFile(manifestPath, JSON.stringify(spec));
+    const lock = path.join(runtimeBaseDir, `${spec.version}-${spec.source.sha256.slice(0, 12)}`, 'bootstrap.lock');
+    await fs.mkdir(lock, { recursive: true });
+    await fs.writeFile(path.join(lock, 'owner.json'), '{');
+    let waited = false;
+    await assert.rejects(ensureLinuxRuntime({ manifestPath, runtimeBaseDir, signal: controller.signal,
+      onProgress: ({ stage }) => { if (stage === 'waiting') { waited = true; controller.abort(); } },
+    }), /abort/i);
+    assert.equal(waited, true);
+    assert.equal(await fs.readFile(path.join(lock, 'owner.json'), 'utf8'), '{');
+  } finally { controller.abort(); await fs.rm(base, { recursive: true, force: true }); }
+});
+
 test('cancelled setup kills its real process group and a waiting caller cannot steal its lock', { skip: process.platform !== 'linux' || process.getuid?.() === 0 }, async t => {
   try { execFileSync('rg', ['--version']); } catch { return t.skip('ripgrep is a documented host prerequisite'); }
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'zeus-linux-cancel-'));
