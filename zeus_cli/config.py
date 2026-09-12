@@ -576,9 +576,10 @@ def _chown_to_zeus_uid(path) -> None:
 
 
 def _secure_dir(path):
-    """chmod a directory owner-only (0700) and apply ZEUS_UID/GID ownership. No-op when managed.
-    ZEUS_HOME_MODE (e.g. 0701) overrides the mode so a web server can traverse ZEUS_HOME to
-    a served subdirectory without directory listings.
+    """chmod a directory owner-only (0700) and apply ZEUS_UID/GID ownership. No-op when managed;
+    in a container only an explicit ZEUS_HOME_MODE is applied. ZEUS_HOME_MODE (e.g. 0701)
+    overrides the mode so a web server can traverse ZEUS_HOME to a served subdirectory without
+    directory listings.
 
     Also applies ``ZEUS_UID``/``ZEUS_GID``-based ownership when those env vars are set (#34107 — Docker
     deployments need this so profile subdirs created at runtime by kanban workers don't land as root:root
@@ -586,8 +587,15 @@ def _secure_dir(path):
     """
     if is_managed():
         return
+    explicit_mode = os.environ.get("ZEUS_HOME_MODE", "").strip()
+    # Same skip as _secure_file: a bind-mounted data dir is often shared with sibling containers
+    # running as other UIDs (web UI, permissions fixers); forcing 0700 on it locks them out on every
+    # start (#10757). An explicit ZEUS_HOME_MODE is the operator's choice and is still applied.
+    if _is_container() and not explicit_mode:
+        _chown_to_zeus_uid(path)
+        return
     try:
-        mode = int(os.environ.get("ZEUS_HOME_MODE", "").strip() or "700", 8)
+        mode = int(explicit_mode or "700", 8)
     except ValueError:
         mode = 0o700
     try:
