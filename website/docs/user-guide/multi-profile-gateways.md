@@ -183,6 +183,11 @@ configuration errors remain fatal: for example, an `open` own-policy platform
 without `GATEWAY_ALLOW_ALL_USERS` or its platform-specific allow-all opt-in
 still aborts gateway startup rather than silently dropping the unsafe profile.
 
+The dashboard and Desktop display a served profile's API and webhook listener
+URLs using the `/p/<profile>/` prefix. They ask before restarting a shared
+gateway and list the profiles whose bots will reconnect. A profile with its own
+gateway keeps its independent lifecycle.
+
 #### 3. Per-credential platforms still need their own token per profile
 
 Polling/connection platforms (Telegram, Discord, Slack, Matrix, Signal, …) work

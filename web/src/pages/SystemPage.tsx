@@ -46,6 +46,12 @@ import { ZeusAgentConsoleModal } from "@/components/ZeusAgentConsoleModal";
 import { cn, themedBody } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import {
+  servedProfileRefusal,
+  sharedGatewayProfiles,
+  sharedGatewayRestartDescription,
+  sharedGatewayRestartedMessage,
+} from "@/lib/shared-gateway";
 import type {
   StatusResponse,
   MemoryStatus,
@@ -286,7 +292,14 @@ export default function SystemPage() {
   }, [loadAll]);
 
   // ── Gateway lifecycle ──────────────────────────────────────────────
+  // A profile served by the shared multiplexer has no gateway of its own: Restart restarts
+  // the ONE process every bot on this device runs in, so confirm first and say so after;
+  // Start/Stop answer 409 with an explanation that belongs in a notice, not a raw error.
+  const sharedGateway = sharedGatewayProfiles(status);
+  const [sharedRestartOpen, setSharedRestartOpen] = useState(false);
+  const [servedNotice, setServedNotice] = useState<string | null>(null);
   const runGateway = async (verb: "start" | "stop" | "restart") => {
+    setServedNotice(null);
     try {
       if (verb === "start") {
         await api.startGateway();
@@ -301,8 +314,20 @@ export default function SystemPage() {
       showToast(`Gateway ${verb} started`, "success");
       setTimeout(loadAll, 3000);
     } catch (e) {
+      const refusal = servedProfileRefusal(e);
+      if (refusal) {
+        setServedNotice(refusal);
+        return;
+      }
       showToast(`Gateway ${verb} failed: ${e}`, "error");
     }
+  };
+  const requestRestart = () => {
+    if (sharedGateway) {
+      setSharedRestartOpen(true);
+      return;
+    }
+    void runGateway("restart");
   };
 
   // ── Curator ────────────────────────────────────────────────────────
@@ -405,6 +430,9 @@ export default function SystemPage() {
 
   const handleActionComplete = useCallback(
     (action: string, exitCode: number | null) => {
+      if (action === "gateway-restart" && exitCode === 0 && sharedGateway) {
+        showToast(sharedGatewayRestartedMessage(sharedGateway.length), "success");
+      }
       if (action === "backup" && pendingBackupArchive) {
         if (exitCode === 0) {
           setDownloadableBackupArchive(pendingBackupArchive);
@@ -414,7 +442,7 @@ export default function SystemPage() {
         }
       }
     },
-    [pendingBackupArchive, showToast],
+    [pendingBackupArchive, sharedGateway, showToast],
   );
 
   const downloadBackup = async () => {
@@ -656,6 +684,18 @@ export default function SystemPage() {
         onChange={(event) => {
           setImportFile(event.currentTarget.files?.[0] ?? null);
         }}
+      />
+
+      <ConfirmDialog
+        open={sharedRestartOpen}
+        onCancel={() => setSharedRestartOpen(false)}
+        onConfirm={() => {
+          setSharedRestartOpen(false);
+          void runGateway("restart");
+        }}
+        title="Restart the shared gateway?"
+        description={sharedGatewayRestartDescription(sharedGateway ?? [])}
+        confirmLabel="Restart all"
       />
 
       <ConfirmDialog
@@ -1064,7 +1104,7 @@ export default function SystemPage() {
               <Button
                 size="sm"
                 className="uppercase"
-                onClick={() => runGateway("restart")}
+                onClick={requestRestart}
                 prefix={<RotateCw className="h-3.5 w-3.5" />}
               >
                 Restart
@@ -1081,6 +1121,11 @@ export default function SystemPage() {
               </Button>
             </div>
           </CardContent>
+          {(sharedGateway || servedNotice) && (
+            <CardContent className="border-t border-current/10 py-3 text-xs text-muted-foreground" data-slot="shared-gateway-notice">
+              {servedNotice ?? `Served by the shared gateway with ${sharedGateway!.join(", ")}.`}
+            </CardContent>
+          )}
         </Card>
       </section>
 

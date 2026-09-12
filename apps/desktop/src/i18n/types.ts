@@ -1521,6 +1521,10 @@ export interface Translations {
     restartGateway: string
     openBrowser: string
     gatewayRestartFailed: string
+    sharedGatewayRestartTitle: string
+    sharedGatewayRestartDescription: (bots: string) => string
+    sharedGatewayRestartConfirm: string
+    sharedGatewayRestarted: (count: number) => string
     updateZeusAgent: string
     reloadWindow: string
     actionRunning: string
@@ -1604,6 +1608,7 @@ export interface Translations {
     states: Record<string, string>
     unknown: string
     hintPendingRestart: string
+    sharedListenerUrl: string
     hintGatewayStopped: string
     credentialsSet: string
     needsSetup: string

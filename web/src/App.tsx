@@ -103,6 +103,7 @@ import type { PluginManifest } from "@/plugins";
 import { useTheme } from "@/themes";
 import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
 import { latchChatActivation } from "@/lib/chat-activation";
+import { sharedGatewayProfiles, sharedGatewayRestartDescription } from "@/lib/shared-gateway";
 import { api } from "@/lib/api";
 import type { StatusResponse, UpdateCheckResponse } from "@/lib/api";
 
@@ -938,6 +939,8 @@ function SidebarSystemActions({
   const { activeAction, isBusy, isRunning, pendingAction, runAction } =
     useSystemActions();
   const canUpdateZeusAgent = status?.can_update_zeus === true;
+  // Served by the shared multiplexer: a restart blips every bot on this device — say which.
+  const sharedGateway = sharedGatewayProfiles(status);
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const [updateConfirmInfo, setUpdateConfirmInfo] =
@@ -1071,17 +1074,21 @@ function SidebarSystemActions({
 
     <ConfirmDialog
       cancelLabel={t.common.cancel}
-      confirmLabel={t.status.restartGateway}
+      confirmLabel={sharedGateway ? "Restart all" : t.status.restartGateway}
       description={
-        t.status.restartGatewayConfirmMessage ??
-        "This restarts the ZeusAgent gateway process. Connected channels and active sessions will reconnect afterward."
+        sharedGateway
+          ? sharedGatewayRestartDescription(sharedGateway)
+          : (t.status.restartGatewayConfirmMessage ??
+            "This restarts the ZeusAgent gateway process. Connected channels and active sessions will reconnect afterward.")
       }
       loading={pendingAction === "restart"}
       onCancel={() => setRestartConfirmOpen(false)}
       onConfirm={confirmRestart}
       open={restartConfirmOpen}
       title={
-        t.status.restartGatewayConfirmTitle ?? `${t.status.restartGateway}?`
+        sharedGateway
+          ? "Restart the shared gateway?"
+          : (t.status.restartGatewayConfirmTitle ?? `${t.status.restartGateway}?`)
       }
     />
 
