@@ -122,3 +122,18 @@ class TestCapabilityProbe:
         )
         report = validate_plugin_dir(d)
         assert report.ok, report.failures
+
+
+class TestRequiresZeusAgentSpec:
+    """A typo'd ``requires_zeus`` clause must fail admission, not silently gate nothing."""
+
+    def test_typoed_clause_fails_admission(self, tmp_path):
+        d = _make_plugin(
+            tmp_path, manifest={**BASE_MANIFEST, "requires_zeus": ">=0.21.1,<0.x"}
+        )
+        report = validate_plugin_dir(d)
+        assert not report.ok
+        assert any(
+            "requires_zeus" in f and "does not parse" in f for f in report.failures
+        ), report.failures
+
