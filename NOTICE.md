@@ -30,7 +30,7 @@ co-author trailers, and an `Upstream-Commit` reference. `upstream-sync.json`
 records the exact range and the preceding Zeus revision.
 
 This is an incremental adaptation, not a claim that every earlier upstream
-change is present. Necessary shared-gateway lifecycle/status helpers were
+change is present. Necessary shared-gateway lifecycle/status and scoped database teardown helpers were
 adapted from the same target snapshot. Hermes logo-only changes are represented
 by attributed empty commits because Zeus already has its own mark; terminal
 alignment is verified against Zeus's layout. The installer mock context-size
@@ -38,6 +38,10 @@ change is applied to Zeus's existing Desktop mock launcher rather than adding
 an unused second fixture. Inherited automation remains inactive under
 `.github/upstream-workflows/`; the Zeus upstream-integration workflow only runs
 tests in GitHub-hosted environments and does not deploy to user servers.
+
+The retained shell installer exposes helper contracts only; source installation
+uses `scripts/setup_zeus.py` and reuses the supported interpreter running it.
+Published release installers keep their separately pinned managed runtime.
 
 The original MIT license in `LICENSE` is preserved verbatim. Copyright notices,
 contributor credits, third-party licenses, external service identities and model IDs

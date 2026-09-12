@@ -7,6 +7,7 @@ profiles' live adapters. The cron ticker's live enumerator is covered in ``tests
 """
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -154,6 +155,30 @@ async def test_deleted_profile_is_torn_down_and_unrouted_others_untouched(tmp_pa
     assert _served_record(home) == ["default", "alpha"]
     assert runner._profile_adapters["alpha"][Platform.DISCORD] is alpha_adapter
     assert alpha_adapter.disconnected is False
+
+
+@pytest.mark.asyncio
+async def test_deleted_profile_releases_real_databases_without_closing_another_profile(tmp_path, monkeypatch):
+    from zeus_constants import mark_named_profile_deleted
+    from zeus_state_registry import acquire, release_or_close
+
+    runner, home = _runner(tmp_path, monkeypatch)
+    removed_home = _mkprofile(home, "gamma")
+    kept_home = _mkprofile(home, "gamma-other")
+    removed = acquire(removed_home / "state.db")
+    kept = acquire(kept_home / "state.db")
+    removed_connection = removed._conn
+    try:
+        with patch("zeus_cli.profiles.get_active_profile_name", return_value="default"):
+            await runner._start_secondary_profile_adapters()
+            mark_named_profile_deleted(removed_home)
+            await runner.reconcile_served_profiles()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            removed_connection.execute("SELECT 1")
+        assert kept._conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        release_or_close(removed)
+        release_or_close(kept)
 
 
 @pytest.mark.asyncio

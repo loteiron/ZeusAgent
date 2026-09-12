@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, cp, access, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, cp, access, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,8 +89,12 @@ test('npm pack and global install expose a relocatable Windows command in both s
   const cmd = run(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'zeus --probe'], { cwd: project, env });
   assert.equal(cmd.status, 23, cmd.stderr);
   const observedCmd = JSON.parse(cmd.stdout.trim());
-  assert.equal(observedCmd.cwd, project);
-  assert.deepEqual(observedCmd.argv, ['--manifest', path.join(installed, 'runtime-manifest.json'), '--', '--probe']);
+  // Windows PowerShell expands 8.3 temp paths. Compare real directory/file
+  // identities while retaining exact checks on every user-supplied argument.
+  assert.equal(await realpath(observedCmd.cwd), await realpath(project));
+  assert.equal(observedCmd.argv[0], '--manifest');
+  assert.equal(await realpath(observedCmd.argv[1]), await realpath(path.join(installed, 'runtime-manifest.json')));
+  assert.deepEqual(observedCmd.argv.slice(2), ['--', '--probe']);
 
   const psScript = path.join(scratch, 'invoke.ps1');
   // Windows PowerShell 5.1 needs a BOM to interpret a UTF-8 script as Unicode.
@@ -98,8 +102,10 @@ test('npm pack and global install expose a relocatable Windows command in both s
   const ps = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript], { cwd: project, env });
   assert.equal(ps.status, 23, ps.stderr);
   const observedPs = JSON.parse(ps.stdout.trim());
-  assert.equal(observedPs.cwd, project);
-  assert.deepEqual(observedPs.argv, ['--manifest', path.join(installed, 'runtime-manifest.json'), '--', '--query', 'Türkçe boşluk & $ literal', '--desktop']);
+  assert.equal(await realpath(observedPs.cwd), await realpath(project));
+  assert.equal(observedPs.argv[0], '--manifest');
+  assert.equal(await realpath(observedPs.argv[1]), await realpath(path.join(installed, 'runtime-manifest.json')));
+  assert.deepEqual(observedPs.argv.slice(2), ['--', '--query', 'Türkçe boşluk & $ literal', '--desktop']);
 });
 
 test('staging refuses to overwrite an existing output directory', async () => {
