@@ -84,3 +84,28 @@ def test_build_welcome_banner_non_moa_unchanged(tmp_path, monkeypatch):
     out = console.export_text()
     assert "claude-opus-4.8" in out
     assert "MoA:" not in out
+
+
+def test_custom_hero_alignment_is_stable_across_terminal_widths():
+    """A wider terminal must not add centering padding to the custom hero."""
+    import io
+    from zeus_cli.skin_engine import SkinConfig
+
+    skin = SkinConfig(banner_hero="[green]\u2800X[/]", banner_logo="")
+    indents = []
+    with (
+        patch.object(model_tools, "check_tool_availability", return_value=([], [])),
+        patch.object(banner, "get_available_skills", return_value={}),
+        patch.object(banner, "get_update_result", return_value=None),
+        patch.object(banner, "get_latest_release_tag", return_value=None),
+        patch.object(tools.mcp_tool_discovery, "get_mcp_status", return_value=[]),
+        patch.object(banner, "_active_skin", return_value=skin),
+    ):
+        for width in (80, 120):
+            buf = io.StringIO()
+            console = Console(file=buf, force_terminal=False, color_system=None, width=width)
+            banner.build_welcome_banner(console=console, model="m", cwd="/tmp", tools=[],
+                                        get_toolset_for_tool=lambda _: None)
+            hero_line = next(line for line in buf.getvalue().splitlines() if "\u2800X" in line)
+            indents.append(hero_line.index("\u2800X"))
+    assert indents[0] == indents[1]
