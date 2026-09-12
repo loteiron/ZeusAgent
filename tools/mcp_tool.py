@@ -445,6 +445,9 @@ _CONNECT_RETRY_BASE_BACKOFF_SEC, _CONNECT_RETRY_MAX_BACKOFF_SEC = 30.0, 600.0
 # — they keep the count and timestamp in sync.
 _server_error_counts: Dict[str, int] = {}
 _server_breaker_opened_at: Dict[str, float] = {}
+# True while every strike in the current streak was the tool's own error payload (server reachable,
+# call rejected); picks the open-breaker wording, since "unreachable" was false for that case (#11113).
+_server_errors_all_application: Dict[str, bool] = {}
 _CIRCUIT_BREAKER_THRESHOLD, _CIRCUIT_BREAKER_COOLDOWN_SEC = 3, 60.0
 
 # Trust-tier gating (``trust: full | untrusted``): on an untrusted server every write-capable
@@ -459,10 +462,13 @@ _tool_read_only_hints: Dict[str, Dict[str, bool]] = {}
 _TRUST_FULL, _TRUST_UNTRUSTED = "full", "untrusted"
 
 
-def _bump_server_error(server_name: str) -> None:
-    """Count a failure; at the threshold (re)stamp the breaker-open time."""
+def _bump_server_error(server_name: str, *, application: bool = False) -> None:
+    """Count a failure and remember whether the transport was reachable."""
     n = _server_error_counts.get(server_name, 0) + 1
     _server_error_counts[server_name] = n
+    _server_errors_all_application[server_name] = application and (
+        n == 1 or _server_errors_all_application.get(server_name, False)
+    )
     if n >= _CIRCUIT_BREAKER_THRESHOLD:
         _server_breaker_opened_at[server_name] = time.monotonic()
 
@@ -471,6 +477,7 @@ def _reset_server_error(server_name: str) -> None:
     """Close the breaker on any unambiguous success signal."""
     _server_error_counts[server_name] = 0
     _server_breaker_opened_at.pop(server_name, None)
+    _server_errors_all_application.pop(server_name, None)
 
 
 # Raw server names opted into parallel tool calls (``foo-bar``/``foo_bar`` sanitize alike but
