@@ -70,7 +70,7 @@ class Acceptance:
             "XDG_DATA_HOME": str(self.home / "root-data-must-not-be-used"),
         }
         self.receipt = {
-            "platform": Path("/etc/os-release").read_text(),
+            "platform": Path("/etc/os-release").read_text(encoding="utf-8"),
             "installer_sha256": digest(args.installer),
             "before_sha256": digest(args.before),
             "checks": [],
@@ -122,11 +122,11 @@ class Acceptance:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(process.pid, signal.SIGTERM)  # windows-footgun: ok — root Ubuntu-only acceptance harness.
             try:
                 stdout, stderr = process.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGKILL)  # windows-footgun: ok — root Ubuntu-only acceptance harness.
                 stdout, stderr = process.communicate()
         with self.log.open("a", encoding="utf-8") as stream:
             stream.write("\n$ " + json.dumps(command, ensure_ascii=False) + "\n")
@@ -171,7 +171,7 @@ class Acceptance:
                     with source, target.open("wb") as destination:
                         shutil.copyfileobj(source, destination)
                     target.chmod(member.mode & 0o777)
-        self.manifest = json.loads((self.npm_root / "linux-runtime-manifest.json").read_text())
+        self.manifest = json.loads((self.npm_root / "linux-runtime-manifest.json").read_text(encoding="utf-8"))
         self.receipt.update({"version": self.manifest["version"], "commit": self.manifest["commit"], "package_sha256": digest(self.package)})
         shutil.copyfile(self.package, self.assets / self.package.name)
         for asset in [self.manifest["source"], self.manifest["uv"], *self.manifest["tools"].values()]:
@@ -233,7 +233,7 @@ class Acceptance:
         cli = ACCOUNT_HOME / ".local/bin/zeus"
         for owned in [cli, ready, runtime / "source" / self.manifest["source"]["root"] / ".zeus-runtime.json"]:
             require(owned.stat().st_uid == installed.pw_uid, f"Runtime file was not created by the ordinary account: {owned}")
-        require(json.loads(ready.read_text())["commit"] == self.manifest["commit"], "Runtime commit differs from the published package")
+        require(json.loads(ready.read_text(encoding="utf-8"))["commit"] == self.manifest["commit"], "Runtime commit differs from the published package")
         require(not (self.home / "root-profile-must-not-be-used").exists(), "Root profile override leaked across privilege boundary")
         require(not (self.home / "root-data-must-not-be-used").exists(), "Root runtime override leaked across privilege boundary")
         self.receipt["checks"].append({
@@ -251,7 +251,7 @@ class Acceptance:
         observations = [self.verify_workspace(project, project, root=True), self.verify_workspace(project, project, root=False)]
         observations.append(self.verify_workspace(self.scratch, ACCOUNT_HOME, root=True))
         profile = ACCOUNT_HOME / ".bashrc"
-        with profile.open("a") as stream:
+        with profile.open("a", encoding="utf-8") as stream:
             stream.write("\n# Acceptance: preserve this user preference.\n")
         config = ACCOUNT_HOME / ".zeus/config.yaml"
         config.parent.mkdir(exist_ok=True)
@@ -310,8 +310,8 @@ def main() -> None:
     for option in ("installer", "before", "assets", "output"):
         parser.add_argument(f"--{option}", type=lambda value: Path(value).resolve(), required=True)
     args = parser.parse_args()
-    require(sys.platform == "linux" and os.geteuid() == 0, "Run as root on a disposable native Ubuntu runner")
-    require(Path("/etc/os-release").is_file() and 'ID=ubuntu' in Path("/etc/os-release").read_text(), "Ubuntu runner required")
+    require(sys.platform == "linux" and os.geteuid() == 0, "Run as root on a disposable native Ubuntu runner")  # windows-footgun: ok — short-circuit Linux guard.
+    require(Path("/etc/os-release").is_file() and 'ID=ubuntu' in Path("/etc/os-release").read_text(encoding="utf-8"), "Ubuntu runner required")
     require(account() is None and not ACCOUNT_HOME.exists(), "Refusing to alter a pre-existing zeususer account or home")
     require(not os.path.lexists(GLOBAL_COMMAND), "Refusing to alter a pre-existing system zeus command")
     acceptance = Acceptance(args)
