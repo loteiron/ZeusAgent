@@ -6,6 +6,7 @@ from gateway.run import (
     _GATEWAY_CONNECTION_ERROR_RE,
     _gateway_provider_error_reply,
     _looks_like_gateway_provider_error,
+    _sanitize_gateway_final_response,
 )
 
 
@@ -61,3 +62,22 @@ class TestGatewayConnectionErrorReply:
         assert "rate-limiting" in _gateway_provider_error_reply(
             "rate limited after 3 retries"
         ).lower()
+
+
+@pytest.mark.parametrize("detail", [
+    "Unable to determine provider for model 'old-route'. Use a provider/model prefix.",
+    '{"error": {"code": "model_not_found", "message": "Model is unavailable"}}',
+    "The model `private-model-id` does not exist.",
+])
+def test_unknown_model_has_actionable_safe_reply_without_claiming_retries(detail):
+    raw = "Error code: 400 - " + detail + " request_id=private-trace-value api_key=private-credential-value"
+    reply = _sanitize_gateway_final_response("telegram", raw)
+    assert "does not recognize" in reply
+    assert "/provider" in reply and "/model" in reply
+    assert "retries" not in reply
+    assert "private-" not in reply and "old-route" not in reply
+
+
+def test_model_routing_words_in_ordinary_assistant_prose_are_preserved():
+    text = "The model `example` does not exist in that fixture. Add it to the test data."
+    assert _sanitize_gateway_final_response("telegram", text) == text

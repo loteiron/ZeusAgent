@@ -600,12 +600,16 @@ def _format_exec_approval_fallback(
         f"{heading}\n```\n{cmd_preview}\n```\nReason: {description}\n\n"
         + ", ".join(choices[:-1]) + f", or {choices[-1]}.")
 
-# Ordered: auth beats policy beats rate-limit beats connection; first match wins.
+# First match wins; authentication/policy errors take precedence over model routing.
 _PROVIDER_ERROR_REPLIES = (
     (_GATEWAY_AUTH_ERROR_RE, "⚠️ Provider authentication failed. Check the configured credentials; "
                              "raw provider details are in the gateway logs."),
     (_GATEWAY_PROVIDER_POLICY_RE, "⚠️ The model provider rejected the request. I kept the raw provider "
                                   "error out of chat; check gateway logs for details or try rephrasing."),
+    (re.compile(r"unable\s+to\s+determine\s+provider\s+for\s+model|\bmodel_not_found\b|"
+                r"\bmodel\s+(?:['\"`][^'\"`\r\n]{1,160}['\"`]\s+)?(?:not\s+found|does\s+not\s+exist|is\s+not\s+available)\b", re.IGNORECASE),
+     "⚠️ The provider does not recognize the configured model. Check the exact model ID and API base URL "
+     "with /model or, in a private Telegram chat, /provider. Raw details are in the gateway logs."),
     (_GATEWAY_RATE_LIMIT_RE, "⏱️ The model provider is rate-limiting requests. Please wait a moment and try again."),
     (_GATEWAY_CONNECTION_ERROR_RE, "⚠️ The model server is not responding — it looks like the configured "
                                    "model endpoint is not running or is unreachable."))
