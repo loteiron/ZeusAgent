@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 from zeus_cli.cli_output import line_input
+from zeus_constants import DEFAULT_DASHBOARD_PORT
 
 _PRE_BUILD_HINT = "  Pre-build first:  npm install --workspace web && npm run build -w web"
 
@@ -35,7 +36,7 @@ def _parse_dashboard_runtime(command: str) -> tuple[str, str, int] | None:
     if mode is None:
         return None
 
-    port = 9119
+    port = DEFAULT_DASHBOARD_PORT
     host = "127.0.0.1"
 
     port_match = re.search(r"(?:^|\s)--port(?:=|\s+)(\d+)", command)

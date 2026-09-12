@@ -157,7 +157,8 @@ class TestAdapterInit:
         config = PlatformConfig(enabled=True)
         adapter = APIServerAdapter(config)
         assert adapter._host == "127.0.0.1"
-        assert adapter._port == 8642
+        from zeus_constants import DEFAULT_API_SERVER_PORT
+        assert adapter._port == DEFAULT_API_SERVER_PORT
         assert adapter._api_key == ""
         assert adapter.platform == Platform.API_SERVER
 

@@ -16,6 +16,10 @@ _profile_fallback_warned: bool = False
 _UNSET = object()
 _ZEUS_HOME_OVERRIDE: ContextVar[str | object] = ContextVar("_ZEUS_HOME_OVERRIDE", default=_UNSET)
 
+# Zeus-owned listeners: separate from Hermes and from external model providers.
+DEFAULT_DASHBOARD_PORT = 9129
+DEFAULT_API_SERVER_PORT = 8742
+
 # TUI busy-indicator styles (CLI /indicator, TUI gateway config, /help registry).
 # Keep in sync with INDICATOR_STYLES / DEFAULT_INDICATOR_STYLE in ui-tui/src/app/interfaces.ts.
 INDICATOR_STYLES: tuple[str, ...] = ("ascii", "emoji", "kaomoji", "unicode")

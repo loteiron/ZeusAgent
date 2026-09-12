@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from zeus_cli import __version__
 from zeus_cli.config import load_config
+from zeus_constants import DEFAULT_DASHBOARD_PORT
 
 try:
     from fastapi import FastAPI, HTTPException, Request
@@ -1351,7 +1352,7 @@ def _run_serve(serve, config, host: str, port: int) -> None:
 
 def start_server(
     host: str = "127.0.0.1",
-    port: int = 9119,
+    port: int = DEFAULT_DASHBOARD_PORT,
     open_browser: bool = True,
     allow_public: bool = False,
     initial_profile: str = "",

@@ -2,7 +2,7 @@
 
 Serves /v1/chat/completions, /v1/responses, /v1/models, /v1/capabilities, /api/sessions,
 /v1/runs, /api/jobs and /health* (full table: ``APIServerAdapter._http_route_table``); any
-OpenAI-compatible frontend connects at http://localhost:8642/v1 with API_SERVER_KEY. Under
+OpenAI-compatible frontend connects at http://localhost:8742/v1 with API_SERVER_KEY. Under
 ``gateway.multiplex_profiles`` secondary profiles live at ``/p/<profile>/...``.
 """
 
@@ -26,6 +26,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zeus_constants import DEFAULT_API_SERVER_PORT
 
 # _resolve_request_profile result for a /p/<profile>/ prefix this gateway does not serve (-> 404);
 # distinct from None (no prefix / multiplexing off -> default profile).
@@ -197,7 +198,7 @@ def _zeus_version() -> str:
 
 # Default settings
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8642
+DEFAULT_PORT = DEFAULT_API_SERVER_PORT
 MAX_STORED_RESPONSES = 100
 MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversations with tool calls
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0

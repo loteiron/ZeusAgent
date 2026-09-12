@@ -118,6 +118,19 @@ with the [release assets](https://github.com/loteiron/ZeusAgent/releases/tag/v0.
 
 ## Install on Ubuntu Linux
 
+For a server or terminal-only installation, run this from your current account,
+including a root SSH session. No manual user creation or `su` is needed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/loteiron/ZeusAgent/main/install.sh | bash
+zeus setup
+zeus
+```
+
+The bootstrap verifies the release installer's SHA-256 before running it. Root
+installation makes `zeus` available immediately; a normal user may need to open
+a new terminal after the first installation.
+
 For Ubuntu 22.04 or 24.04 on x86_64, download the
 [desktop .deb](https://github.com/loteiron/ZeusAgent/releases/download/v0.22.0/ZeusAgent-0.22.0-linux-x64.deb)
 and install it from your download directory:
@@ -161,6 +174,33 @@ old global Zeus npm symlink is backed up when the root dispatcher replaces it;
 unrelated launchers are preserved. `--no-modify-path` skips shell-profile edits.
 Runtime files live under `${XDG_DATA_HOME:-~/.local/share}/ZeusAgent`;
 conversations and settings live separately in the installation user's `~/.zeus`.
+
+### Run alongside Hermes
+
+Use a separate Zeus dashboard listener, including with the existing v0.22.0
+release package:
+
+```sh
+zeus dashboard --host 127.0.0.1 --port 9129 --no-open
+```
+
+The current source also defaults to dashboard port `9129` and API server port
+`8742`. Explicit port options still take precedence, including `--port 0` for
+automatic dashboard port allocation. To use `8742` with an older packaged
+runtime, set `platforms.api_server.port: 8742` in Zeus's `config.yaml` before
+enabling that optional API adapter.
+
+Telegram uses its own bot token and outbound polling, so it requires no inbound
+TCP port. Once configured through `zeus setup`, keep it running across SSH
+disconnects and reboots with:
+
+```sh
+zeus gateway install --start-now --start-on-login
+zeus gateway status
+```
+
+Model-provider URLs are independent of these listeners. An existing OmniRoute
+service can continue to serve both agents at its configured address.
 
 ## Install the command with npm
 

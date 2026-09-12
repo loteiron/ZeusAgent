@@ -97,7 +97,7 @@ Examples:
     zeus debug share             Upload debug report for support
     zeus console                Open the safe ZeusAgent command console
     zeus update                 Update to latest version
-    zeus dashboard              Start web UI dashboard (port 9119)
+    zeus dashboard              Start web UI dashboard (port 9129)
     zeus dashboard --stop       Stop running dashboard processes
     zeus dashboard --status     List running dashboard processes
 
