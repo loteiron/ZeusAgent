@@ -1,4 +1,8 @@
-"""install.sh reuses an already-installed supported Python instead of downloading 3.11 (#10778)."""
+"""The retained installer helper reuses supported Python without downloading 3.11 (#10778).
+
+Zeus uses scripts/setup_zeus.py for source installation. Its interpreter reuse is
+covered in test_source_setup.py; the legacy shell only exposes sourced helpers.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ def _exe(path: Path, content: str) -> Path:
 
 
 def _run_prerequisites(tmp_path: Path, *, uv_find_script: str) -> subprocess.CompletedProcess[str]:
-    """Run the real ``--stage prerequisites`` with a stub managed uv whose ``python find`` we script."""
+    """Source the real helper with a managed uv whose ``python find`` we script."""
     home = tmp_path / "home"
     zeus_home = home / ".zeus"
     (zeus_home / "bin").mkdir(parents=True)
@@ -37,7 +41,10 @@ def _run_prerequisites(tmp_path: Path, *, uv_find_script: str) -> subprocess.Com
     env.update({"HOME": str(home), "ZEUS_HOME": str(zeus_home),
                 "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', os.defpath)}"})
     bash = shutil.which("bash") or "/bin/bash"
-    return subprocess.run([bash, str(INSTALL_SH), "--stage", "prerequisites", "--non-interactive"],
+    return subprocess.run([bash, "-c",
+                           'source "$1" --manifest >/dev/null; '
+                           'DISTRO=ubuntu; UV_CMD="$ZEUS_HOME/bin/uv"; check_python',
+                           "bash", str(INSTALL_SH)],
                           env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
 
 
@@ -49,4 +56,5 @@ def test_supported_newer_python_is_reused_instead_of_downloading_311(tmp_path: P
         # `uv python find` returns venv/bin/python3, which setup_venv then deletes.
         f"  [ \"$3\" = 3.11 ] && exit 2\n  [ \"$3\" = --system ] && [ \"$4\" = '>=3.11,<3.14' ] && {{ echo {tmp_path}/bin/python3.13; exit 0; }}\n  exit 2\n"))
     assert "DOWNLOAD ATTEMPTED" not in result.stdout, result.stdout
+    assert result.returncode == 0, result.stdout
     assert "Python found: Python 3.13.12" in result.stdout, result.stdout

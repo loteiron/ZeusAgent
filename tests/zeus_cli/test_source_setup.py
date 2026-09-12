@@ -50,6 +50,22 @@ def test_complete_test_setup_is_locked_and_does_not_install_frontends(commands, 
     assert Path(options["env"]["UV_PROJECT_ENVIRONMENT"]).name == "zeus-agent"
 
 
+@pytest.mark.parametrize("minor", [11, 12, 13])
+def test_source_setup_reuses_the_running_supported_interpreter(commands, monkeypatch, tmp_path, minor):
+    """A supported local Python must not be replaced by a download of another minor."""
+    running = str(tmp_path / "existing python" / f"python3.{minor}")
+    monkeypatch.setattr(sys, "argv", ["setup_zeus.py"])
+    monkeypatch.setattr(sys, "version_info", (3, minor, 1))
+    monkeypatch.setattr(sys, "executable", running)
+
+    assert setup.main() == 0
+    assert len(commands) == 1
+    argv, _options = commands[0]
+    assert argv[argv.index("--python") + 1] == running
+    assert "sync" in argv
+    assert "install" not in argv
+
+
 @pytest.mark.parametrize("failed_stage", ["sync", "ci", "build"])
 def test_failed_setup_never_runs_later_stages(commands, monkeypatch, capsys, failed_stage):
     monkeypatch.setattr(sys, "argv", ["setup_zeus.py", "--desktop"])
