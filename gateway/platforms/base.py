@@ -3495,6 +3495,12 @@ class BasePlatformAdapter(ABC):
             logger.warning("Dropping internally routed event: expected session=%s derived=%s",
                            expected_session_key, session_key)
             return
+        from zeus_cli.commands import resolve_command
+        command_def = resolve_command(event.get_command()) if event.get_command() else None
+        if command_def and command_def.sensitive_args:
+            # Never put credentials in task recovery state, debouncing or the pending queue.
+            await self._dispatch_inline_reply(event)
+            return
         # On-entry self-heal: clear a guard whose owner task already exited.
         if session_key in self._active_sessions:
             self._heal_stale_session_lock(session_key)

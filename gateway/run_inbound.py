@@ -115,6 +115,9 @@ class GatewayInboundMixin:
         """Ingress gates for ``_handle_message``; None when dropped, else ``(event, source, is_internal)``
         (the ``pre_gateway_dispatch`` hook may have rewritten ``event``)."""
         from gateway.run import _is_slack_ignored_channel
+        from zeus_cli.commands import resolve_command
+        command_def = resolve_command(event.get_command()) if event.get_command() else None
+        sensitive = bool(command_def and command_def.sensitive_args)
         source = event.source
         # getattr(self, ...) throughout: bare test runners build GatewayRunner via object.__new__.
         _config = getattr(self, "config", None)
@@ -168,6 +171,7 @@ class GatewayInboundMixin:
             getattr(self, "_startup_restore_in_progress", False)
             and not is_internal
             and not getattr(event, "_zeus_startup_restore_replay", False)
+            and not sensitive
         ):
             self._queue_startup_restore_event(event)
             return None
@@ -178,7 +182,8 @@ class GatewayInboundMixin:
         # scale-to-zero: only real user-originated inbound stamps the last-inbound clock;
         # counting internal/system events would keep a genuinely idle gateway awake.
         self._scale_to_zero_note_real_inbound()
-        event = self._hm_pre_gateway_dispatch_hook(event, source)
+        if not sensitive:
+            event = self._hm_pre_gateway_dispatch_hook(event, source)
         if event is None:
             return None
         source = event.source
@@ -1205,10 +1210,35 @@ class GatewayInboundMixin:
             logger.debug("FIFO orphan rescue pre-claim failed for %s", _quick_key, exc_info=True)
             return event, source, is_internal
 
+    async def _handle_sensitive_command(self, event, command_def):
+        """Credential controls retain ingress/authorization gates but never enter a transcript or hook."""
+        try:
+            admitted = await self._hm_admit_event(event)
+            if admitted is None:
+                return None
+            event, source, internal = admitted
+            if internal:
+                return "Credential configuration requires a direct user command."
+            denied = self._check_slash_access(source, command_def.name)
+            if denied:
+                return denied
+            handler = self._gateway_plain_command_handlers().get(command_def.name)
+            if handler is None:
+                return "This credential command is unavailable."
+            return await handler(event)
+        finally:
+            event.text = f"/{command_def.name} [redacted]"
+            event.raw_message = None
+            event.reply_to_text = None
+
     async def _handle_message(self, event: MessageEvent) -> Optional[str]:
         """Handle an incoming message from any platform: auth → command check → running-agent
         interrupt → get/create session → build context → run agent → return response."""
         from gateway.run import _AGENT_PENDING_SENTINEL
+        from zeus_cli.commands import resolve_command
+        command_def = resolve_command(event.get_command()) if event.get_command() else None
+        if command_def and command_def.sensitive_args:
+            return await self._handle_sensitive_command(event, command_def)
         _admitted = await self._hm_admit_event(event)
         if _admitted is None:
             return None

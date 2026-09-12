@@ -41,6 +41,8 @@ class CommandDef:
     argument_mode: str | None = None  # desktop composer: options|text|mixed; None inferred
     # Desktop availability: None = offered; "hidden" = runs but out of the popover; else a reason.
     desktop: str | None = None
+    # Credential-bearing controls bypass plugin hooks, queues and transcript handling.
+    sensitive_args: bool = False
 
 
 VALID_BUSY_POLICIES: frozenset[str] = frozenset({"dispatch", "reject", "interrupt_then_dispatch"})
@@ -155,6 +157,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("model", "Switch model (session-scoped; --global to persist)", "Configuration",
                args_hint="[model] [--provider name] [--global|--session] [--refresh]",
                busy_policy="reject", busy_handler="model", desktop="hidden"),
+    CommandDef("provider", "Configure a custom provider in a private Telegram chat", "Configuration",
+               gateway_only=True, args_hint="[status | set URL MODEL KEY [API_MODE]]",
+               busy_policy="dispatch", desktop="messaging", sensitive_args=True),
     CommandDef("codex-runtime", "Toggle codex app-server runtime for OpenAI/Codex models",
                "Configuration", aliases=("codex_runtime",), args_hint="[auto|codex_app_server]",
                busy_policy="reject", busy_handler="codex-runtime"),

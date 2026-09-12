@@ -74,6 +74,33 @@ In the terminal UI, Ctrl+C or double-Esc preserves a discarded draft for Up-arro
 recall, including multiline and pasted text. Discarded image attachments are
 detached. Ctrl+C interrupts an active turn; from an empty idle composer it exits.
 
+### Custom provider setup from Telegram
+
+In a private chat with your Zeus bot, an explicitly authorized owner can configure
+an OpenAI-compatible custom endpoint without opening the server terminal:
+
+```text
+/provider
+/provider status
+/provider set https://api.example.com/v1 your-model YOUR_API_KEY
+```
+
+The optional final argument selects `chat_completions` (default) or `responses`.
+Use `none` instead of a key only for endpoints that require no authentication.
+The URL is reached from the gateway computer, so `localhost` means that computer.
+
+Setup applies to the next message in this chat and becomes the profile default
+for new sessions. Stop an active turn with `/stop`, or let it finish, before
+changing providers. This command saves the route; it does not test the endpoint.
+
+Only explicitly listed private-chat owners (`allow_admin_from`, or `allow_from`
+when no administrator policy is configured) can use this command. Group chats
+and allow-all access cannot configure credentials. Keys go into the profile's
+private `.env`; config stores a reference. Setup commands bypass agent turns,
+transcripts, plugin hooks, and message queues. Zeus attempts to delete the setup
+message from Telegram; if deletion fails, remove it yourself. Status hides keys.
+This command supports custom providers only.
+
 ## Move from Hermes
 
 Open **Settings → Move from Hermes**, select the destination Zeus profile, and

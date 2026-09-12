@@ -5711,7 +5711,13 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._gate_or_observe(msg, update, MessageType.TEXT):
             return
         await self._ensure_forum_commands(update.message)
-        self._enqueue_text_event(await self._build_triggered_event(msg, update, MessageType.TEXT))
+        event = await self._build_triggered_event(msg, update, MessageType.TEXT)
+        from zeus_cli.commands import resolve_command
+        command = resolve_command(event.get_command()) if event.get_command() else None
+        if command and command.sensitive_args:
+            await self.handle_message(event)
+            return
+        self._enqueue_text_event(event)
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming command messages."""
@@ -5725,6 +5731,11 @@ class TelegramAdapter(BasePlatformAdapter):
             return
         await self._ensure_forum_commands(msg)
         event = await self._build_triggered_event(msg, update, MessageType.COMMAND)
+        from zeus_cli.commands import resolve_command
+        command = resolve_command(event.get_command()) if event.get_command() else None
+        if command and command.sensitive_args:
+            await self.handle_message(event)
+            return
         # A >4096-char command paste arrives as a near-limit COMMAND chunk plus TEXT continuations; dispatching
         # immediately would orphan them. Near-limit commands go through text batching.
         if len(event.text or "") >= self._SPLIT_THRESHOLD:
