@@ -156,12 +156,19 @@ def _stop_backend(backend: ComputerUseBackend, call_lock: Optional[threading.RLo
     except Exception as e:
         on_error(e)
 
-def _get_backend(session_id: str = "") -> ComputerUseBackend:
+def _scoped_sid(session_id: str) -> str:
+    """Namespace a served profile's backend, call lock and cached approvals together."""
+    from zeus_constants import get_zeus_home_override, zeus_home_key
     sid = str(session_id or "")
+    return sid if get_zeus_home_override() is None else f"{sid}@{zeus_home_key()}"
+
+
+def _get_backend(session_id: str = "") -> ComputerUseBackend:
+    bare_sid, sid = str(session_id or ""), _scoped_sid(session_id)
     while True:
         with _backend_lock:
             # Mode resolved under the cache lock; YOLO mutation never holds the approval lock while releasing it.
-            permission_mode = _cua_permission_mode(sid)
+            permission_mode = _cua_permission_mode(bare_sid)
             if sid == "" and _backend is not None and sid not in _backends:
                 _install_backend(sid, _backend, permission_mode)  # fold the injection hook into the cache
             if (cached := _backends.get(sid)) is None:
@@ -178,7 +185,7 @@ def release_computer_use_session(session_id: str) -> bool:
     """Release one session-owned backend (lifecycle seam for hosts/plugins); idempotent, True iff one was released.
     Cache entries are removed BEFORE stopping so new lookups cannot retain the stale target/ref namespace; approval
     state is cleared even without a backend."""
-    sid = str(session_id or "")
+    sid = _scoped_sid(session_id)
     with _backend_lock:
         backend, call_lock = _detach_locked(sid)
     with _approval_lock:
@@ -261,7 +268,7 @@ def handle_computer_use(args: Dict[str, Any], **kwargs) -> Any:
                                    "If a Python dependency is missing, the error above shows the exact install command."})
     try:
         with _backend_lock:
-            call_lock = _backend_call_locks.setdefault(session_id, threading.RLock())
+            call_lock = _backend_call_locks.setdefault(_scoped_sid(session_id), threading.RLock())
         with call_lock:
             return _dispatch(backend, action, args)
     except Exception as e:
@@ -277,6 +284,7 @@ def _request_approval(action: str, args: Dict[str, Any], session_id: str = "") -
     user explicitly opted into unattended operation. State is keyed on session_id so concurrent runs don't
     leak unlocks into one another. See #67052.
     """
+    session_id = _scoped_sid(session_id)
     scope_key = (action, "foreground" if args.get("delivery_mode") == "foreground" else "background")
     with _approval_lock:
         if _session_auto_approve.get(session_id) or scope_key in _always_allow.get(session_id, set()):
