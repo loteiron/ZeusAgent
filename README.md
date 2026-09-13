@@ -25,6 +25,10 @@ and setup experience, with coordinated light and dark appearances.
   before the goal can be marked complete.
 - **Continue your work.** Persistent sessions, memory, and reusable skills keep
   context and workflows available between conversations.
+- **Learn from observed failures.** Project Experience keeps failed checks,
+  observed recoveries, cause hypotheses and counterexamples together. Relevant
+  experience returns when the agent reads a related file; source changes make
+  previous results stale. Inspect it with `/experience` or `zeus experience`.
 - **Use real tools.** Work with files, execute terminal commands, browse the web,
   and connect additional capabilities through MCP and plugins.
 - **Choose your model.** Configure supported cloud providers or compatible local
@@ -95,6 +99,38 @@ session. An expired panel or a panel from before `/new` cannot control a new ses
 In the terminal UI, Ctrl+C or double-Esc preserves a discarded draft for Up-arrow
 recall, including multiline and pasted text. Discarded image attachments are
 detached. Ctrl+C interrupts an active turn; from an empty idle composer it exits.
+
+### Project Experience
+
+Zeus learns from the checks it actually executes. A failed check followed by the
+same check passing on changed source becomes an **observed recovery**. A pass on
+unchanged source is marked **unstable**; a new failure on a previously passing
+source is a **counterexample**. Cause and repair explanations remain hypotheses.
+
+In a later conversation, reading a related local project file can bring back a
+short experience note before the next edit. Repeated failures also return relevant
+notes with the terminal result. Recall does not rewrite the cached system prompt,
+invoke another model, or add learning messages to ordinary conversation.
+
+```sh
+zeus experience list --root /path/to/project
+zeus experience recall "connection timeout" --root /path/to/project
+zeus experience show EXPERIENCE_ID --root /path/to/project --json
+zeus experience explain EXPERIENCE_ID --cause "Timeout mismatch" --resolution "Align the deadlines" --avoid "Retrying without a change" --conditions "Worker startup path"
+zeus experience forget EXPERIENCE_ID
+```
+
+`/experience [list|status|recall <words>|show <id>]` provides read-only inspection
+in the terminal, Desktop/TUI chat, and an explicitly authorized owner's private
+Telegram chat. Telegram uses the profile's configured `terminal.cwd`; it does not
+allow a chat message to select an arbitrary server directory or erase experience.
+
+Experience is stored privately per profile in `experience.db` and included in
+Zeus backups. Defaults retain 500 recent cases and up to 24 observations per case.
+Set `experience.enabled: false` to stop automatic capture and recall, or
+`experience.recall_enabled: false` to keep capture without contextual reminders.
+Read the [learning rules and limitations](docs/experience-learning.md) before
+interpreting a passing check as evidence about an entire project.
 
 ### Custom provider setup from Telegram
 

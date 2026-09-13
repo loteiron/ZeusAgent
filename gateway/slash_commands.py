@@ -28,6 +28,7 @@ from gateway.session_transcript import TranscriptReadError
 from gateway.slash_commands_goals import GatewayGoalCommandsMixin
 from gateway.slash_commands_model import GatewayModelCommandsMixin
 from gateway.slash_commands_provider import GatewayProviderCommandsMixin
+from gateway.slash_commands_experience import GatewayExperienceCommandsMixin
 from gateway.slash_commands_session import GatewaySessionCommandsMixin
 from gateway.slash_commands_status import HISTORY_UNREADABLE, GatewayStatusCommandsMixin
 from zeus_cli.config import atomic_config_write, cfg_get
@@ -159,6 +160,7 @@ def _home_thread_from_source(source) -> Optional[str]:
 
 
 class GatewaySlashCommandsMixin(
+    GatewayExperienceCommandsMixin,
     GatewayProviderCommandsMixin,
     GatewayModelCommandsMixin,
     GatewaySessionCommandsMixin,

@@ -1014,6 +1014,10 @@ def _commit_tool_result(
         )
     _record_persisted_path_for_stub(agent, tool_call_id, persisted_result)
 
+    if observed and not blocked and not is_error and isinstance(persisted_result, str):
+        from agent.experience_runtime import read_experience_hint
+        persisted_result += read_experience_hint(agent, function_name, function_args, effective_task_id)
+
     subdir_hints = agent._subdirectory_hints.check_tool_call(function_name, function_args)
     if subdir_hints:
         if _is_multimodal_tool_result(persisted_result):

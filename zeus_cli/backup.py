@@ -106,7 +106,7 @@ _EXCLUDED_PREFIXES = ("state.db.pre-update-emergency-",)
 _IMPORT_SKIP_NAMES = {"gateway_state.json", "gateway.pid", "cron.pid", "gateway.lock", "processes.json"}
 
 # zipfile.open() drops Unix mode bits on extract; restore tightens these to 0600.
-_SECRET_FILE_NAMES = {".env", "auth.json", "state.db"}
+_SECRET_FILE_NAMES = {".env", "auth.json", "state.db", "experience.db"}
 
 # Reserved archive subtree for memory-provider state OUTSIDE ZEUS_HOME (e.g. ~/.honcho, via
 # MemoryProvider.backup_paths()), stored and restored relative to the user's home; paths not
@@ -1077,6 +1077,7 @@ _QUICK_STATE_FILES = (
     "response_store.db",                # gateway conversation history / tool payloads
     "memory_store.db",                  # holographic memory facts/entities
     "verification_evidence.db",         # agent verification audit trail
+    "experience.db",                    # project experience and copied check observations
     "kanban.db",                        # default board (back-compat <root>/kanban.db)
     "kanban/boards",                    # non-default boards (workspaces/ + attachments/ skipped as regenerable)
     # Pairing stores (generic + per-platform JSONs outside state.db)

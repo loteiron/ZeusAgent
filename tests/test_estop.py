@@ -196,11 +196,15 @@ class _FakeEvent:
 @pytest.mark.asyncio
 async def test_gateway_new_turn_gets_paused_reply(zeus_home):
     from gateway.run import GatewayRunner
+    from gateway.config import Platform
+    from gateway.platforms.event import MessageEvent
+    from gateway.session import SessionSource
 
     runner = object.__new__(GatewayRunner)
     runner._is_user_authorized = lambda source: True  # bare-instance stub
     estop.engage(reason="maintenance")
-    reply = await runner._handle_message(_FakeEvent())
+    reply = await runner._handle_message(MessageEvent(text="hello", source=SessionSource(
+        platform=Platform.TELEGRAM, chat_id="c1", user_id="u1", user_name="user", chat_type="dm")))
     assert reply is not None
     assert "paused" in reply.lower()
     assert "maintenance" in reply

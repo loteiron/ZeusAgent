@@ -191,7 +191,10 @@ def _verification_evidence(command, cwd, session_id, returncode, output, before=
                                           exit_code=returncode, output=output, workspace_before=before,
                                           workspace_after=before if not local else None)
         if evidence:
-            return {k: evidence.get(k) for k in ("status", "kind", "scope", "canonical_command", "freshness", "check_key")}
+            summary = {k: evidence.get(k) for k in ("status", "kind", "scope", "canonical_command", "freshness", "check_key")}
+            if evidence.get("experience"):
+                summary["experience"] = evidence["experience"]
+            return summary
     return None
 
 

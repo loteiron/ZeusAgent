@@ -56,8 +56,25 @@ def test_mutation_requires_live_session_and_local_workspace(context, monkeypatch
     assert report["workspace"]["status"] == "unavailable"
 
 
+def test_experience_slash_reads_the_live_project_and_rejects_host_path_spoofing(context, tmp_path, monkeypatch):
+    server, root = context
+    from agent.verification_evidence import begin_verify_run, record_verify_run
+    record_verify_run(root=root, session_id="durable", ok=False, output="Recorded project failure",
+                      workspace_before=begin_verify_run(root=root, session_id="durable"))
+    reply = server._methods["experience.command"](1, {"session_id": "runtime", "cwd": str(tmp_path), "command": "list"})
+    assert "Recorded project failure" in reply["result"]["output"]
+    catalog = server._methods["commands.catalog"](4, {})["result"]
+    assert catalog["commands"]["/experience"]["desktop"] is None
+    text = server._methods["slash.exec"](5, {"session_id": "runtime", "command": "/experience list"})
+    assert "Recorded project failure" in text["result"]["output"]
+    assert "error" in server._methods["experience.command"](2, {"session_id": "missing", "cwd": str(root)})
+    monkeypatch.setattr(server, "_effective_terminal_backend", lambda: "ssh")
+    rejected = server._methods["experience.command"](3, {"session_id": "runtime"})
+    assert "error" in rejected
+
+
 @pytest.mark.parametrize("method", ["verification.status", "verification.baseline.capture",
-                                   "verification.baseline.clear", "session.control.read", "session.control",
+                                   "verification.baseline.clear", "experience.command", "session.control.read", "session.control",
                                    "hermes.migration.scan", "hermes.migration.import"])
 def test_slow_evidence_does_not_block_the_rpc_reader(context, monkeypatch, method):
     server, _ = context

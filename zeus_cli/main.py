@@ -2319,7 +2319,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "auth", "status", "cron", "doctor", "config", "pairing", "skills", "tools", "mcp",
         "sessions", "insights", "update", "uninstall", "profile", "dashboard", "serve",
         "desktop", "gui", "honcho", "claw", "plugins", "security", "acp", "webhook", "peer",
-        "memory", "dump", "debug", "backup", "import", "completion", "logs",
+        "memory", "experience", "dump", "debug", "backup", "import", "completion", "logs",
     }
     _SESSION_FLAGS = {"-c", "--continue", "-r", "--resume"}
 
@@ -3218,6 +3218,8 @@ def _build_cli_parser():
     build_hooks_parser(subparsers, cmd_hooks=cmd_hooks)
     build_doctor_parser(subparsers, cmd_doctor=cmd_doctor)
     build_verify_parser(subparsers, cmd_verify=cmd_verify)
+    from zeus_cli.subcommands.experience import build_experience_parser
+    build_experience_parser(subparsers)
     build_security_parser(subparsers, cmd_security=cmd_security)
     build_approvals_parser(subparsers, cmd_approvals=cmd_approvals)
     build_dump_parser(subparsers, cmd_dump=cmd_dump)

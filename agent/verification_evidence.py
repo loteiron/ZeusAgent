@@ -558,7 +558,16 @@ def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
     from agent.verification_report import decorate_check
     event = {"id": event_id, **e.__dict__, "created_at": created_at, "check_key": check_key,
              "command": command, "output_summary": output}
-    return decorate_check(event, _parse_snapshot(e.workspace_after_json), None)
+    decorated = decorate_check(event, _parse_snapshot(e.workspace_after_json), None)
+    from agent.experience_runtime import learn_from_check
+    try:
+        experience = learn_from_check(decorated)
+        if experience:
+            decorated["experience"] = experience
+    except (OSError, sqlite3.Error):
+        import logging
+        logging.getLogger(__name__).warning("Experience learning unavailable; verification receipt retained.")
+    return decorated
 
 
 def mark_workspace_edited(
@@ -642,6 +651,7 @@ def _begin_evidence(evidence, *, local=True) -> dict:
         workspace = _workspace_snapshot(evidence.cwd)
     run_id = str(uuid.uuid4())
     workspace["_verification_run_id"] = run_id
+    workspace["_verification_started_at"] = _utc_now()
     event = {**evidence.__dict__, "id": "running:" + run_id, "created_at": _utc_now(),
              "status": "running", "exit_code": None, "check_key": _check_key(evidence.__dict__),
              "command": redact_terminal_output(evidence.command, "env"),

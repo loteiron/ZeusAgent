@@ -159,6 +159,7 @@ _DETAIL_MODES = frozenset({"hidden", "collapsed", "expanded"})
 # git subprocess probes on an arbitrary (maybe slow) mount.
 _LONG_HANDLERS = frozenset({
     "verification.status", "verification.baseline.capture", "verification.baseline.clear",
+    "experience.command",
     "session.control.read", "session.control",  # content identity probes must leave the reader responsive
     "hermes.migration.scan", "hermes.migration.import",
     "session.foreign.list", "session.foreign.preview", "session.foreign.import",

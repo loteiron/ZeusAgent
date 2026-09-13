@@ -27,7 +27,7 @@ class _Adapter(BasePlatformAdapter):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("text", ["/mistyped_zeus_command", "/check_loop@Zeus_Bot", "/broken_lookup"])
+@pytest.mark.parametrize("text", ["/mistyped_zeus_command", "/check_loop@Zeus_Bot", "/broken_lookup", "/experience"])
 async def test_busy_slash_keeps_running_agent_and_pending_human_message_intact(text, monkeypatch):
     from gateway.run import GatewayRunner
 
@@ -48,6 +48,7 @@ async def test_busy_slash_keeps_running_agent_and_pending_human_message_intact(t
     runner._peek_session_state = lambda _key: SimpleNamespace(turn=SimpleNamespace(agent=Mock()))
     runner._resolve_busy_steer_or_redirect = AsyncMock(side_effect=AssertionError("A slash command reached model steering"))
     runner._handle_loop_command = AsyncMock(return_value="Loop active: check the deployment")
+    runner._handle_experience_command = AsyncMock(return_value="Project experience: observed failure")
     runner._send_busy_reply = AsyncMock()
     if text == "/broken_lookup":
         monkeypatch.setattr("zeus_cli.plugins.get_plugin_command_handler",
@@ -70,11 +71,14 @@ async def test_busy_slash_keeps_running_agent_and_pending_human_message_intact(t
     assert adapter._pending_messages[key] is queued
     assert queued.text == "keep this human request"
     assert adapter._active_sessions[key] is guard and not guard.is_set()
-    replies = [str(call.args) for call in runner._send_busy_reply.await_args_list + adapter._send_with_retry.await_args_list]
+    replies = [str((call.args, call.kwargs)) for call in runner._send_busy_reply.await_args_list + adapter._send_with_retry.await_args_list]
     assert any("Unknown command" in reply or "Loop active" in reply or "lookup is temporarily unavailable" in reply
-               for reply in replies)
+               or "Project experience" in reply
+               for reply in replies), replies
     if text.startswith("/check_loop"):
         runner._handle_loop_command.assert_awaited_once()
+    if text == "/experience":
+        runner._handle_experience_command.assert_awaited_once()
 
 
 @pytest.mark.asyncio

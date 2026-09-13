@@ -2186,6 +2186,12 @@ class CLICommandsMixin:
         _cp(f"  {format_dispatch_note(result, prompt)}")
 
     # ---- /goal, /loop, /subgoal -----------------------------------------------------------
+    def _handle_experience_command(self, cmd: str) -> None:
+        from zeus_cli.experience_command import dispatch_experience_command
+
+        parts = cmd.split(None, 1)
+        _cp(_escape(dispatch_experience_command(parts[1] if len(parts) > 1 else "", root=os.getcwd())))
+
     def _handle_evidence_command(self, cmd: str) -> None:
         """Inspect this console session's existing checks; never execute a recipe."""
         parts = cmd.split(None, 1)

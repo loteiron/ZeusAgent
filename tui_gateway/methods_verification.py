@@ -76,5 +76,22 @@ def _(rid, params: dict) -> dict:
     return _verification_baseline_action(rid, params, capture=False)
 
 
+@method("experience.command")
+@_profile_scoped
+def _(rid, params: dict) -> dict:
+    """The session owns profile/workspace selection; chat arguments are inspection only."""
+    session, error = _sess_nowait(params, rid)
+    if error:
+        return error
+    from zeus_cli.experience_command import dispatch_experience_command
+    with _session_profile_runtime_scope(session):
+        cwd = str(session.get("cwd") or "")
+        if not cwd or _context_cwd_is_launch_artifact(session):
+            return _err(rid, 4004, "Choose a project workspace before inspecting its experience.")
+        if _effective_terminal_backend() != "local":
+            return _err(rid, 4004, "Experience inspection requires a local terminal workspace.")
+        return _ok(rid, {"output": dispatch_experience_command(str(params.get("command") or ""), root=cwd)})
+
+
 def register(server):
     bind_module(globals(), server, skip=("_",))
