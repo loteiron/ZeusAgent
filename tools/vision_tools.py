@@ -797,7 +797,7 @@ async def vision_analyze_tool(
     return await _run_analysis("image", image_url, user_prompt, model, stage)
 
 
-def check_vision_requirements() -> bool:
+def check_video_requirements() -> bool:
     """True when ``call_llm(task="vision")`` could resolve a client.
 
     Mirrors its fallback chain: explicit ``auxiliary.vision.provider``, then auto (main
@@ -814,6 +814,14 @@ def check_vision_requirements() -> bool:
             )
     except Exception:
         return False
+
+
+def check_vision_requirements() -> bool:
+    """Image tools can use the main model's native vision or an auxiliary client.
+
+    Video still requires an auxiliary client because its handler has no native path.
+    """
+    return _should_use_native_vision_fast_path() or check_video_requirements()
 
 
 from tools.registry import registry, tool_error
@@ -1045,7 +1053,7 @@ registry.register(
     toolset="video",
     schema=VIDEO_ANALYZE_SCHEMA,
     handler=_handle_video_analyze,
-    check_fn=check_vision_requirements,
+    check_fn=check_video_requirements,
     is_async=True,
     emoji="🎬")
 

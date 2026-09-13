@@ -258,3 +258,18 @@ model:
         import tools.browser_tool
         with patch.object(bt_install, "check_browser_requirements", return_value=True):
             assert tools.browser_tool_install.check_browser_vision_requirements() is True
+
+    def test_native_vision_main_advertises_image_tools_but_not_video(self, isolated_home, monkeypatch):
+        """Native image support does not require a separate auxiliary model (#47149)."""
+        from unittest.mock import patch
+        _write_config(isolated_home, "model:\n  provider: custom\n  default: local-vision\n  supports_vision: true\n")
+        _fresh_modules()
+        from tools import vision_tools
+        from tools import browser_tool_install
+        from agent import auxiliary_client
+        with patch.object(vision_tools, "_should_use_native_vision_fast_path", return_value=True), \
+             patch.object(browser_tool_install, "check_browser_requirements", return_value=True), \
+             patch.object(auxiliary_client, "resolve_vision_provider_client", return_value=(None, None)):
+            assert vision_tools.check_vision_requirements() is True
+            assert browser_tool_install.check_browser_vision_requirements() is True
+            assert vision_tools.check_video_requirements() is False
