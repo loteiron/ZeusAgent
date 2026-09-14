@@ -92,6 +92,10 @@ def _capture_required_environment_variables(
     if not missing_entries:
         return _capture_result([])
     missing_names = [entry["name"] for entry in missing_entries]
+    from agent.autonomy import is_enabled
+    if is_enabled():
+        return _capture_result(missing_names, setup_skipped=True,
+                               gateway_setup_hint="Autonomous mode: required credentials are unavailable; setup was not completed.")
     # Messaging-platform gateway surfaces can't prompt for a secret, so they get the "unsupported"
     # hint. Interactive gateway surfaces (desktop app / TUI) set ZEUS_INTERACTIVE (same flag
     # tools/approval.py uses) and register a callback routing to a secure secret.request overlay.
@@ -106,6 +110,9 @@ def _capture_required_environment_variables(
         return _capture_result(missing_names)
     remaining_names: List[str] = []
     for entry in missing_entries:
+        if is_enabled():
+            remaining_names.append(entry["name"])
+            continue
         metadata = {"skill_name": skill_name, **{k: entry[k] for k in ("help", "required_for") if entry.get(k)}}
         try:
             callback_result = callback(entry["name"], entry["prompt"], metadata)

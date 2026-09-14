@@ -72,15 +72,13 @@ def zeus_home(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def server(zeus_home, monkeypatch):
-    # Mocks are scoped to the initial import only (see
-    # tests/tui_gateway/test_protocol.py for the rationale).
-    with patch.dict(
-        "sys.modules",
-        {
-            "zeus_cli.env_loader": MagicMock(),
-            "zeus_cli.banner": MagicMock(),
-        },
-    ):
+    # Patch only these entries: patch.dict(sys.modules) also removes modules first
+    # imported inside its context, leaving cached dispatch functions bound to an
+    # orphan server's pending-prompt dictionaries on the next test.
+    with monkeypatch.context() as imports:
+        import sys
+        imports.setitem(sys.modules, "zeus_cli.env_loader", MagicMock())
+        imports.setitem(sys.modules, "zeus_cli.banner", MagicMock())
         mod = importlib.import_module("tui_gateway.server")
 
     # Pin config resolution to the isolated ZEUS_HOME. Sibling test
@@ -205,6 +203,25 @@ def test_autonom_task_creates_unlimited_goal(server, session):
         assert GoalManager(key).state.max_turns == 0
     finally:
         clear_mode(key)
+
+
+@pytest.mark.parametrize("kind", ["clarify.request", "sudo.request", "secret.request"])
+def test_autonom_releases_only_its_own_pending_questions(server, session, kind):
+    from agent.autonomy import clear_mode
+    sid, key, state = session
+    own, other = threading.Event(), threading.Event()
+    server._pending.update({"own-question": (sid, own), "other-question": ("other-session", other)})
+    server._pending_prompt_payloads.update({"own-question": (kind, {}), "other-question": (kind, {})})
+    try:
+        result = _call(server, "slash.exec", session_id=sid, command="/autonom")
+        assert "error" not in result
+        assert own.is_set()
+        assert server._answers["own-question"] == ""
+        assert not other.is_set()
+        assert "other-question" not in server._answers
+    finally:
+        clear_mode(key)
+        server._pending_prompt_payloads.clear()
 
 
 class _InlineThread:

@@ -177,6 +177,9 @@ def _prompt_for_sudo_password(timeout_seconds: int = 45) -> str:
     """Prompt for a sudo password; "" on skip (empty Enter), timeout, or error. Prefers the
     CLI-registered callback (prompt_toolkit-integrated); otherwise reads /dev/tty (msvcrt on
     Windows) with echo disabled. Human wait time is excluded from tool deadlines (``human_wait_window``)."""
+    from agent.autonomy import is_enabled
+    if is_enabled():
+        return ""  # Existing credentials/NOPASSWD were already tried; do not invent one.
     from tools.terminal_tool import _get_sudo_password_callback
     _sudo_cb = _get_sudo_password_callback()
     if _sudo_cb is not None:

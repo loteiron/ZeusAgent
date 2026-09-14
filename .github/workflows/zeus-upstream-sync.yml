@@ -66,6 +66,7 @@ jobs:
             tests/tui_gateway/test_compute_host.py tests/tui_gateway/test_compute_host_phase1.py \
             tests/tui_gateway/test_compute_host_turn_protocol.py \
             tests/tui_gateway/test_auto_continue.py tests/tui_gateway/test_session_control.py \
+            tests/tools/test_skills_tool.py tests/tools/test_subagent_sudo_prompt.py \
             tests/scripts/test_windows_footguns_full_repo_scan.py -- --tb=short -ra | tee integration-tests.log
       - name: Exercise the actual Linux runtime and npm launchers
         run: node --test scripts/linux-runtime.test.mjs scripts/stage_zeus_npm.test.mjs

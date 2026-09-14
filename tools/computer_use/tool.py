@@ -284,6 +284,11 @@ def _request_approval(action: str, args: Dict[str, Any], session_id: str = "") -
     user explicitly opted into unattended operation. State is keyed on session_id so concurrent runs don't
     leak unlocks into one another. See #67052.
     """
+    from agent.autonomy import is_enabled
+    # The model task id and the hosting chat key are distinct identity namespaces.
+    # Match the same profile-scoped runtime grant used by the backend mode resolver.
+    if is_enabled(session_id) or is_enabled():
+        return None
     session_id = _scoped_sid(session_id)
     scope_key = (action, "foreground" if args.get("delivery_mode") == "foreground" else "background")
     with _approval_lock:

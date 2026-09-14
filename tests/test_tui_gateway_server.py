@@ -17944,13 +17944,14 @@ def test_make_agent_nested_max_turns_takes_priority(monkeypatch):
     assert mock_agent.call_args.kwargs["max_iterations"] == 400
 
 
-def test_make_agent_defaults_to_500(monkeypatch):
+def test_make_agent_defaults_to_unlimited(monkeypatch):
     _setup_make_agent_mocks(monkeypatch, {})
 
     with patch("run_agent.AIAgent") as mock_agent:
         server._make_agent("sid1", "key1")
 
-    assert mock_agent.call_args.kwargs["max_iterations"] == 500
+    from zeus_cli.config import TURN_LIMIT_UNLIMITED
+    assert mock_agent.call_args.kwargs["max_iterations"] == TURN_LIMIT_UNLIMITED
 
 
 def test_make_agent_uses_session_runtime_overrides(monkeypatch):
@@ -18039,12 +18040,13 @@ def test_background_agent_kwargs_falls_back_to_root_max_turns(monkeypatch):
     assert kwargs["max_iterations"] == 50
 
 
-def test_background_agent_kwargs_defaults_to_25(monkeypatch):
+def test_background_agent_kwargs_defaults_to_unlimited(monkeypatch):
     monkeypatch.setattr(server, "_load_cfg", lambda: {})
 
     kwargs = server._background_agent_kwargs(_FakeAgentForBackground(), "task_1")
 
-    assert kwargs["max_iterations"] == 25
+    from zeus_cli.config import TURN_LIMIT_UNLIMITED
+    assert kwargs["max_iterations"] == TURN_LIMIT_UNLIMITED
 
 
 def test_background_agent_kwargs_handles_null_agent_config(monkeypatch):

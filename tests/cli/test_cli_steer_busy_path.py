@@ -142,6 +142,21 @@ class TestSteerBusyPathDispatch:
         cli.agent.steer.assert_called_once_with("focus on errors")
         cli._pending_input.put.assert_not_called()
 
+    def test_autonom_skips_pending_credentials_without_filling_them(self):
+        import queue
+        from agent.autonomy import clear_mode
+        cli = _make_cli()
+        responses = {name: queue.Queue() for name in ("sudo", "secret")}
+        for name, response in responses.items():
+            setattr(cli, f"_{name}_state", {"response_queue": response})
+        try:
+            cli.process_command("/autonom")
+            for name, response in responses.items():
+                assert response.get_nowait() == ""
+                assert getattr(cli, f"_{name}_state") is None
+        finally:
+            clear_mode(cli.session_id)
+
     def test_idle_path_queues_as_next_turn(self):
         """Control — when the agent is NOT running, /steer correctly falls
         back to next-turn queue semantics.  Demonstrates why the fix was

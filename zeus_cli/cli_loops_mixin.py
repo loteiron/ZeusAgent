@@ -48,6 +48,13 @@ class CLILoopsMixin:
             if result.enabled and isinstance(approval, dict) and approval.get("response_queue"):
                 approval["response_queue"].put("once")
                 self._approval_state = None
+            if result.enabled:
+                for name in ("sudo", "secret"):
+                    pending = getattr(self, f"_{name}_state", None)
+                    if isinstance(pending, dict) and pending.get("response_queue"):
+                        pending["response_queue"].put("")
+                        setattr(self, f"_{name}_state", None)
+                        setattr(self, f"_{name}_deadline", 0)
         if result.task:
             self._handle_goal_command(f"/goal {result.task}")
         return True
