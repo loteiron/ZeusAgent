@@ -3,7 +3,7 @@
 A goal is a free-form objective that stays active across turns; after each turn an auxiliary-model
 judge decides whether it is satisfied. The continuation prompt is a normal user message appended via
 ``run_conversation`` (no system-prompt mutation or toolset swap — prompt caching stays intact). Judge
-failures are fail-OPEN (``continue``); the turn budget is the backstop.
+failures initially continue; repeated judge failures pause the goal. Turn limits are optional.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants & defaults ──────────────────────────────────────────────
 
-DEFAULT_MAX_TURNS = 20
+DEFAULT_MAX_TURNS = 0  # no implicit cross-turn limit
 DEFAULT_JUDGE_TIMEOUT = 30.0
 # Judge output budget. Reasoning models burn hidden-reasoning tokens before the visible one-line
 # JSON verdict; 200 (the original) reliably truncated it and tripped the auto-pause. 4096 covers
@@ -456,6 +456,14 @@ class GoalState:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
+
+    @property
+    def turn_progress(self) -> str:
+        return f"{self.turns_used}/{self.max_turns}" if self.max_turns else f"{self.turns_used} (unlimited)"
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self.max_turns > 0 and self.turns_used >= self.max_turns
 
     @classmethod
     def from_json(cls, raw: str) -> "GoalState":
@@ -1136,7 +1144,7 @@ class GoalManager:
         s = self._state
         if s is None or s.status == "cleared":
             return "No active goal. Set one with /goal <text>."
-        turns = f"{s.turns_used}/{s.max_turns} turns"
+        turns = f"{s.turn_progress} turns"
         sub = f", {len(s.subgoals)} subgoal{'s' if len(s.subgoals) != 1 else ''}" if s.subgoals else ""
         con = ", contract" if self.has_contract() else ""
         gat = f", {len(s.gates)} gate{'s' if len(s.gates) != 1 else ''}" if s.gates else ""
@@ -1218,7 +1226,7 @@ class GoalManager:
             raise ValueError("goal text is empty")
         self._state = GoalState(
             goal=goal, status="active", turns_used=0, created_at=time.time(), last_turn_at=0.0,
-            max_turns=int(max_turns) if max_turns else self.default_max_turns,
+            max_turns=max(0, int(max_turns)) if max_turns is not None else self.default_max_turns,
             contract=contract if contract is not None else GoalContract(),
             workspace=self._workspace if self._workspace is not None else normalized_workspace(os.getcwd()),
         )
@@ -1454,7 +1462,7 @@ class GoalManager:
         self._state.last_verdict = "gate_unverified"
         self._state.last_reason = reason
         self._save()
-        if self._state.turns_used >= self._state.max_turns:
+        if self._state.budget_exhausted:
             return self._budget_pause(self._state, "gate_unverified", reason)
         prompt = (f"[Goal verification needs fresh evidence]\nGoal: {self._state.goal}\n"
                   f"{reason}\nRe-run the required checks against the current workspace before claiming completion. "
@@ -1621,7 +1629,7 @@ class GoalManager:
         # so the judge is skipped and the gate's output drives the next turn (same turn budget).
         gate_decision = self._check_gates()
         if gate_decision is not None:
-            if gate_decision.get("should_continue") and state.turns_used >= state.max_turns:
+            if gate_decision.get("should_continue") and state.budget_exhausted:
                 return self._budget_pause(state, "gate_failed", gate_decision.get("reason", ""), note=" (a quality gate is still failing)")
             return gate_decision
 
@@ -1676,13 +1684,13 @@ class GoalManager:
                 + _JUDGE_CONFIG_HINT.format(provider="openrouter", model="google/gemini-3-flash-preview"),
             )
 
-        if state.turns_used >= state.max_turns:
+        if state.budget_exhausted:
             return self._budget_pause(state, "continue", reason)
 
         self._save()
         return _decision(
             "active", True, self.next_continuation_prompt(), "continue", reason,
-            f"↻ Continuing toward goal ({state.turns_used}/{state.max_turns}): {reason}",
+            f"↻ Continuing toward goal ({state.turn_progress}): {reason}",
         )
 
     def next_continuation_prompt(self) -> Optional[str]:
@@ -1832,7 +1840,7 @@ def run_kanban_goal_loop(
             prompt = KANBAN_GOAL_CONTINUATION_TEMPLATE.format(reason=_truncate(reason, 400))
 
         # Budget check BEFORE spending another turn.
-        if turns_used >= max_turns:
+        if max_turns > 0 and turns_used >= max_turns:
             _log(f"kanban goal loop: task {task_id} exhausted {turns_used}/{max_turns} turns; blocking")
             _block(
                 f"Goal-mode worker exhausted its turn budget "

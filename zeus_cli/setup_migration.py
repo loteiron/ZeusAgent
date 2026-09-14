@@ -103,10 +103,15 @@ def _tools_summary(config: dict) -> Optional[str]:
     return ", ".join(tools) if tools else None
 
 
+def _agent_summary(config: dict) -> str:
+    from zeus_cli.config import format_turn_limit
+    return "max turns: " + format_turn_limit((config.get("agent") or {}).get("max_turns"))
+
+
 _SECTION_SUMMARIES = {
     "model": _model_summary,
     "terminal": partial(_cfg_summary, section="terminal", key="backend", default="local", prefix="backend: "),
-    "agent": partial(_cfg_summary, section="agent", key="max_turns", default=90, prefix="max turns: "),
+    "agent": _agent_summary,
     "gateway": _gateway_summary,
     "tools": _tools_summary,
 }

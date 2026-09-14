@@ -107,6 +107,26 @@ class TestSteerBusyPathDispatch:
     """When the detector fires, process_command('/steer ...') must call
     agent.steer() directly rather than the idle-path fallback."""
 
+    def test_autonom_typed_during_clarification_is_a_command(self):
+        import queue
+        from agent.autonomy import is_enabled, clear_mode
+        cli = _make_cli()
+        cli._agent_running = True
+        cli.agent = MagicMock()
+        responses = queue.Queue()
+        cli._clarify_state = {"response_queue": responses}
+        cli._clarify_freetext = True
+        event = MagicMock()
+        event.app.current_buffer.text = "/autonom"
+        try:
+            assert cli._tui_enter_overlay(event)
+            assert is_enabled(cli.session_id)
+            assert responses.get_nowait() == ""
+            assert cli._clarify_state is None
+            cli.agent.steer.assert_called_once()
+        finally:
+            clear_mode(cli.session_id)
+
     def test_process_command_routes_to_agent_steer(self):
         """With _agent_running=True and agent.steer present, /steer reaches
         agent.steer(payload), NOT _pending_input."""

@@ -447,6 +447,9 @@ class CLIInfoMixin:
         """Return True when /steer should be dispatched immediately while the agent is running."""
         return self._busy_inline_command(text, has_images, ("steer",))
 
+    def _should_handle_schedule_command_inline(self, text: str, has_images: bool = False) -> bool:
+        return self._busy_inline_command(text, has_images, ("autonom", "goal", "loop", "subgoal", "stop"))
+
     def _should_handle_background_command_inline(
         self, text: str, has_images: bool = False) -> bool:
         """Return True when /bg or /btw should be dispatched while the agent runs (their

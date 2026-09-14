@@ -440,19 +440,20 @@ def setup_agent_settings(config: dict):
     # ── Max Iterations ── (config.yaml is authoritative; never surface a stale legacy .env value)
     # If a legacy .env entry is still around (from pre-PR#18413 setups), prefer the config value so we don't
     # surface a stale number to the user.
-    current_max = str(cfg_get(config, "agent", "max_turns", default=90))
+    from zeus_cli.config import format_turn_limit, resolve_turn_limit, TURN_LIMIT_UNLIMITED
+    current_max = format_turn_limit(cfg_get(config, "agent", "max_turns"))
     _info("Maximum tool-calling iterations per conversation.",
           "Higher = more complex tasks, but costs more tokens.",
-          f"Press Enter to keep {current_max}. Use 90 for most tasks or 150+ for open exploration.")
-    max_iter = _prompt_number("Max iterations", current_max)
-    if max_iter is None:
-        print_warning("Invalid number, keeping current value")
+          f"Press Enter to keep {current_max}. Use unlimited for no cap, or a positive integer.")
+    max_iter = resolve_turn_limit(prompt("Max iterations", current_max), default=-2)
+    if max_iter == -2:
+        print_warning("Invalid limit, keeping current value")
     elif max_iter > 0:
         # config.yaml only; gateway/run.py derives ZEUS_MAX_ITERATIONS from agent.max_turns.
-        config.setdefault("agent", {})["max_turns"] = max_iter
+        config.setdefault("agent", {})["max_turns"] = None if max_iter == TURN_LIMIT_UNLIMITED else max_iter
         config.pop("max_turns", None)
         remove_env_value("ZEUS_MAX_ITERATIONS")
-        print_success(f"Max iterations set to {max_iter}")
+        print_success(f"Max iterations set to {format_turn_limit(max_iter)}")
 
     # ── Tool Progress Display ──
     _info("", *_TOOL_PROGRESS_HELP)

@@ -185,6 +185,18 @@ class TestTUIResolver:
     """Verify that _cfg_max_turns in tui_gateway/server.py routes through
     resolve_turn_limit instead of bare int()."""
 
+    def test_fresh_surface_and_delegation_have_no_iteration_cap(self, monkeypatch):
+        from tui_gateway.server import _cfg_max_turns
+        from zeus_cli.config import DEFAULT_CONFIG, format_turn_limit
+        from tools.delegate_tool import DEFAULT_MAX_ITERATIONS
+        monkeypatch.delenv("ZEUS_TUI_MAX_TURNS", raising=False)
+        assert _cfg_max_turns({}) == TURN_LIMIT_UNLIMITED
+        assert resolve_turn_limit(DEFAULT_CONFIG["agent"].get("max_turns")) == TURN_LIMIT_UNLIMITED
+        assert resolve_turn_limit(DEFAULT_CONFIG["delegation"].get("max_iterations")) == TURN_LIMIT_UNLIMITED
+        assert DEFAULT_MAX_ITERATIONS == TURN_LIMIT_UNLIMITED
+        assert format_turn_limit(TURN_LIMIT_UNLIMITED) == "unlimited"
+        assert format_turn_limit(12) == "12"
+
     def test_string_none_resolves_to_unlimited(self):
         from tui_gateway.server import _cfg_max_turns
         cfg = {"agent": {"max_turns": "none"}}

@@ -222,9 +222,15 @@ def _maybe_fire_tui_loop_tick(sid: str, session: dict) -> None:
     if not (sid_key := session.get("session_key") or ""):
         return
     mgr = LoopManager(session_id=sid_key)
-    if not mgr.is_due() or goal_blocks_loop_tick(sid_key) or not _notif_claim_turn(session):
+    if goal_blocks_loop_tick(sid_key) or not _notif_claim_turn(session):
         return  # busy — stays due, next poll retries
-    if not (wakeup := mgr.fire_tick()):
+    try:
+        mgr.recover_idle_tick()
+        wakeup = mgr.fire_tick()
+    except Exception:
+        _notif_release_turn(session)
+        raise
+    if not wakeup:
         _notif_release_turn(session)
         return
     rid = f"__loop__{int(time.time() * 1000)}"

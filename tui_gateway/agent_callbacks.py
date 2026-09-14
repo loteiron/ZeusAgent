@@ -227,8 +227,9 @@ def _apply_personality_to_session(
     return False, info
 
 
-def _cfg_max_turns(cfg: dict, default: int) -> int:
-    from zeus_cli.config import resolve_turn_limit as _resolve_turn_limit
+def _cfg_max_turns(cfg: dict, default: int | None = None) -> int:
+    from zeus_cli.config import resolve_turn_limit as _resolve_turn_limit, TURN_LIMIT_UNLIMITED
+    default = TURN_LIMIT_UNLIMITED if default is None else default
     # Env override wins; resolve_turn_limit makes "none"/"unlimited"/0 first-class spellings.
     if env_val := os.environ.get("ZEUS_TUI_MAX_TURNS"):
         return _resolve_turn_limit(env_val, default=default)
@@ -269,7 +270,7 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
                                      "acp_args", "ephemeral_system_prompt")},
         **{k: g(k) for k in ("providers_allowed", "providers_ignored", "providers_order", "provider_sort",
                              "provider_data_collection", "openrouter_min_coding_score")},
-        "model": g("model") or _resolve_model(), "max_iterations": _cfg_max_turns(cfg, 25),
+        "model": g("model") or _resolve_model(), "max_iterations": _cfg_max_turns(cfg),
         "enabled_toolsets": g("enabled_toolsets") or _load_enabled_toolsets("tui"),
         "quiet_mode": True, "verbose_logging": False,
         "provider_require_parameters": g("provider_require_parameters", False), "session_id": task_id,

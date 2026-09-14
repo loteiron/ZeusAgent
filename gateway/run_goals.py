@@ -40,9 +40,9 @@ class GatewayGoalsMixin:
                 from zeus_cli.config import load_config
 
                 goals_cfg = (load_config() or {}).get("goals") or {}
-            return int(goals_cfg.get("max_turns", 20) or 20)
+            return max(0, int(goals_cfg.get("max_turns", 0) or 0))
         except Exception:
-            return 20
+            return 0
 
     async def _warm_goals_session_db(self, label: str) -> None:
         """Warm the goals SessionDB cache off-loop (best-effort): a cold cache runs the state.db
@@ -102,7 +102,8 @@ class GatewayGoalsMixin:
     @staticmethod
     def _synthetic_prompt_event(source: Any, text: str, *, internal: bool = False) -> MessageEvent:
         """Build the TEXT event used to inject a goal/heartbeat/loop prompt into a session."""
-        return MessageEvent(text=text, message_type=MessageType.TEXT, source=source, internal=internal)
+        return MessageEvent(text=text, message_type=MessageType.TEXT, source=source, internal=internal,
+                            metadata={"scheduled_work": True})
 
     def _register_heartbeat_watch(self, quick_key: str, source: Any, session_id: str) -> None:
         """Track the canonical route and start the restart-recoverable poller."""
@@ -329,7 +330,8 @@ class GatewayGoalsMixin:
             hooks.insert(0, ("goal continuation", self._post_turn_goal_continuation))
         for label, hook in hooks:
             try:
-                await hook(session_entry=session_entry, source=source, final_response=final_text)
+                extra = {"event": event} if label == "loop completion" and event is not None else {}
+                await hook(session_entry=session_entry, source=source, final_response=final_text, **extra)
             except Exception as exc:
                 logger.debug("%s hook failed: %s", label, exc)
 
@@ -348,7 +350,7 @@ class GatewayGoalsMixin:
         return streamed if isinstance(streamed, str) and streamed.strip() else text
 
     async def _post_turn_loop_completion(
-        self, *, session_entry: Any, source: Any, final_response: str,
+        self, *, session_entry: Any, source: Any, final_response: str, event: Any = None,
     ) -> None:
         """Complete a /loop wakeup tick after a gateway turn. No-op unless a tick is in flight
         (``awaiting_response``, set when the wakeup was injected); applies the LOOP_COMPLETE marker
@@ -361,10 +363,12 @@ class GatewayGoalsMixin:
         state = mgr.state if mgr is not None else None
         if state is None or not state.awaiting_response:
             return
+        if event is not None:
+            expected = (state.created_at, state.ticks_fired, state.last_fired_at)
+            if not event.internal or getattr(event, "_loop_tick_identity", None) != expected:
+                return  # an ordinary turn or a replaced schedule does not own this tick
         # The --until judge is a sync aux-LLM call — keep it off the event loop.
-        decision = await asyncio.get_running_loop().run_in_executor(
-            None, mgr.complete_tick, final_response or ""
-        )
+        decision = await self._run_in_executor_with_context(mgr.complete_tick, final_response or "")
         msg = decision.get("message") or ""
         if msg and source is not None:
             await self._defer_goal_status_notice_after_delivery(source, msg)
@@ -373,7 +377,7 @@ class GatewayGoalsMixin:
         """Inject one due /loop wakeup into its session, applying every deferral rule."""
         from zeus_cli.loops import LoopManager, goal_blocks_loop_tick
 
-        if state.awaiting_response or now < state.next_due_at:
+        if now < state.next_due_at:
             return
         route = state.route or {}
         platform_name = route.get("platform", "")
@@ -402,10 +406,14 @@ class GatewayGoalsMixin:
             session_key = self._session_key_for_source(source)
         if session_key and session_key in self._running_agents:
             return  # busy — stays due, next scan retries
+        if session_key and (session_key in getattr(adapter, "_active_sessions", {})
+                            or self._queue_depth(session_key, adapter=adapter)):
+            return
         if goal_blocks_loop_tick(sid):
             return
 
         mgr = LoopManager(session_id=sid)
+        await self._run_in_executor_with_context(lambda: mgr.recover_idle_tick(now))
         if not mgr.is_due(now):
             return
         # fire_tick()/complete_tick() are writes (BEGIN IMMEDIATE) taking the SessionDB writer lock; a slow
@@ -425,7 +433,9 @@ class GatewayGoalsMixin:
                 mgr.state.ticks_fired if mgr.state else "?",
                 platform_name, source.chat_id, source.thread_id,
             )
-            await adapter.handle_message(self._synthetic_prompt_event(source, wakeup, internal=True))
+            event = self._synthetic_prompt_event(source, wakeup, internal=True)
+            event._loop_tick_identity = (mgr.state.created_at, mgr.state.ticks_fired, mgr.state.last_fired_at)
+            await adapter.handle_message(event)
             # Slash-command loops dispatch through the command path and never hit the post-turn
             # completion hook — complete the tick immediately (caps + scheduling).
             if wakeup.lstrip().startswith("/"):

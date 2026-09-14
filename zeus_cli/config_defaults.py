@@ -1246,7 +1246,7 @@ DEFAULT_CONFIG = {
         # toolsets=["web"] doesn't strip MCP). false = strict intersection.
         "inherit_mcp_toolsets": True,
         # Per-subagent iteration cap (own budget, independent of the parent's).
-        "max_iterations": 250,
+        "max_iterations": None,  # unlimited; explicit positive values opt into a child limit
         # Hard per-summary char ceiling on subagent results, layered on the dynamic budget (each
         # summary is sized to the parent's remaining context headroom; trimmed text spills to
         # ~/.zeus/cache/delegation/ with a head+tail window + read_file offset footer, nothing
@@ -1283,16 +1283,15 @@ DEFAULT_CONFIG = {
     # goal is satisfied, else a continuation prompt re-enters the session until done, budget
     # exhausted, or paused. Judge failures fail OPEN; the budget is the backstop.
     "goals": {
-        # Max continuation turns before auto-pause (/goal resume) — guards against judge false
-        # negatives and unbounded spend.
-        "max_turns": 20,
+        # 0 = continue until achieved, blocked, or explicitly stopped.
+        "max_turns": 0,
     },
     # Loops — /loop re-runs a prompt or slash command on a cadence in-session. Fixed interval fires
     # on the user's clock; self-paced (no interval) starts at the floor and backs off exponentially
     # while replies stop changing.
     "loops": {
         "min_interval_seconds": 30,  # smallest fixed interval; tighter cadences raised to it
-        "max_ticks": 100,  # auto-pause after this many wakeups unless --times set; 0 = unlimited
+        "max_ticks": 0,  # no implicit repetition limit; positive values opt into auto-pause
         "self_paced_floor_seconds": 60,  # Self-paced cadence bounds (seconds).
         "self_paced_ceiling_seconds": 900,
     },

@@ -1379,6 +1379,7 @@ class CLITuiMixin:
                     event.app.exit()
         elif (
             self._should_handle_steer_command_inline(text, has_images=has_images)
+            or self._should_handle_schedule_command_inline(text, has_images=has_images)
             or self._should_handle_background_command_inline(text, has_images=has_images)):
             self.process_command(text)
         else:
@@ -1397,6 +1398,13 @@ class CLITuiMixin:
         """
         from cli import CLI_CONFIG, _ACCENT, _DIM, _RST, _cprint, _zeus_home
         _effective_mode = self.busy_input_mode
+        from agent.autonomy import is_enabled
+        scheduled_work = any(
+            getattr(getattr(getattr(self, name, None), "state", None), "status", None) == "active"
+            for name in ("_loop_manager", "_goal_manager")
+        )
+        if is_enabled(self.session_id) or scheduled_work:
+            _effective_mode = "steer"
         redirected = False
         if _effective_mode == "steer":
             if images or not text:
@@ -1457,6 +1465,15 @@ class CLITuiMixin:
         """Enter while a modal overlay is up: submit it. True when handled."""
         from cli import _cprint
         buf = event.app.current_buffer
+        if self._clarify_state or self._approval_state:
+            from zeus_cli.commands import resolve_command
+            text = buf.text.strip()
+            command = resolve_command(text.split()[0][1:]) if text.startswith("/") else None
+            if command and command.name == "autonom":
+                self.process_command(text)
+                buf.reset(append_to_history=True)
+                event.app.invalidate()
+                return True
         if self._sudo_state:
             self._sudo_state["response_queue"].put(buf.text)
             self._sudo_state = None

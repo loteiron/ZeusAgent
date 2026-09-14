@@ -655,6 +655,17 @@ def _cmd_retry(rid, params, session, name, arg):
     return _ok(rid, {"type": "send", "message": content})
 
 
+def _cmd_stop(rid, params, session, name, arg):
+    if session is None:
+        return _err(rid, 4001, "session not found")
+    try:
+        _tts_stream_stop()
+        _stop_session_work(str(params.get("session_id") or ""), session, request_id=f"stop-{rid}")
+    except Exception as exc:
+        return _err(rid, 5019, f"stop failed: {exc}")
+    return _exec_out(rid, "Stopped current work and paused session schedules.")
+
+
 def _cmd_steer(rid, params, session, name, arg):
     if not arg:
         return _err(rid, 4004, "usage: /steer <prompt>")
@@ -673,9 +684,9 @@ def _cmd_goal(rid, params, session, name, arg):
         if err:
             return err
         try:
-            max_turns = int((_load_cfg().get("goals") or {}).get("max_turns", 20) or 20)
+            max_turns = max(0, int((_load_cfg().get("goals") or {}).get("max_turns", 0) or 0))
         except Exception:
-            max_turns = 20
+            max_turns = 0
         mgr = goals.GoalManager(session_id=sid_key, default_max_turns=max_turns, workspace=_session_cwd(session))
         from zeus_cli.goal_command import dispatch_goal_command
         result = dispatch_goal_command(
@@ -684,6 +695,8 @@ def _cmd_goal(rid, params, session, name, arg):
         )
         if result.error:
             return _err(rid, 4004, result.output)
+        if mgr.is_active():
+            session["_scheduled_work"] = True
         if not result.prompt:
             return _exec_out(rid, result.output)
         payload = {"type": "send", "notice": result.output, "message": result.prompt}
@@ -693,11 +706,50 @@ def _cmd_goal(rid, params, session, name, arg):
         return _ok(rid, payload)
 
 
+def _cmd_autonom(rid, params, session, name, arg):
+    with _session_profile_runtime_scope(session or {}):
+        key, autonomy, err = _session_key_or_err(rid, session, "agent.autonomy", "autonomous mode")
+        if err:
+            return err
+        previous_mode = autonomy.get_mode(key)
+        result = autonomy.dispatch_autonomy_command(key, arg)
+        if result.changed:
+            if _session_uses_compute_host(session) and session.get("_compute_host_active"):
+                status, text = _compute_host_slash(
+                    params.get("session_id", ""), session, "autonom",
+                    "/autonom " + ("on" if result.enabled else "off"))
+                if status != "ok":
+                    if previous_mode is None:
+                        autonomy.clear_mode(key)
+                    else:
+                        autonomy.set_mode(key, previous_mode)
+                    return _err(rid, 5019, "Could not update the running agent's autonomous mode: " + text)
+            agent = session.get("agent")
+            if session.get("running") and agent and callable(getattr(agent, "steer", None)):
+                agent.steer(autonomy.turn_instruction(key))
+            if result.enabled:
+                from tools.approval import resolve_gateway_approval
+                resolve_gateway_approval(key, "once", resolve_all=True)
+                from .autonomy_prompts import release_autonomous_prompts
+                release_autonomous_prompts(params.get("session_id", ""),
+                                          _prompt_lock, _pending, _pending_prompt_payloads, _answers, _emit)
+        if result.task:
+            response = _cmd_goal(rid, params, session, "goal", result.task)
+            payload = response.get("result", {})
+            if "notice" in payload:
+                payload["notice"] = result.output + "\n" + payload["notice"]
+            return response
+        return _exec_out(rid, result.output)
+
+
 def _cmd_loop(rid, params, session, name, arg):
     sid_key, loops, err = _session_key_or_err(rid, session, "zeus_cli.loops", "loops")
     if err:
         return err
-    result = loops.dispatch_loop_command(loops.LoopManager(session_id=sid_key), arg)
+    mgr = loops.LoopManager(session_id=sid_key)
+    result = loops.dispatch_loop_command(mgr, arg)
+    if mgr.is_active():
+        session["_scheduled_work"] = True
     output = result.get("output") or ""
     if result.get("created"):
         with contextlib.suppress(Exception):
@@ -788,7 +840,8 @@ def _cmd_compress(rid, params, session, name, arg):
 _SLASH_BUILTINS = {
     "queue": _cmd_queue, "q": _cmd_queue, "learn": _cmd_learn, "plan": _cmd_plan, "init": _cmd_init,
     "moa": _cmd_moa, "focus": _cmd_focus, "retry": _cmd_retry, "steer": _cmd_steer, "goal": _cmd_goal,
-    "loop": _cmd_loop, "undo": _cmd_undo, "snapshot": _cmd_snapshot, "snap": _cmd_snapshot,
+    "loop": _cmd_loop, "autonom": _cmd_autonom, "stop": _cmd_stop,
+    "undo": _cmd_undo, "snapshot": _cmd_snapshot, "snap": _cmd_snapshot,
     "compress": _cmd_compress, "compact": _cmd_compress}
 
 @method("command.dispatch")
@@ -951,7 +1004,7 @@ def _(rid, params: dict) -> dict:
         {"title": "Model", "rows": [
             ["Model", _resolve_model()], ["Base URL", base_url or "(default)"], ["API Key", masked]]},
         {"title": "Agent", "rows": [
-            ["Max Turns", str(_cfg_max_turns(cfg, 500))],
+            ["Max Turns", _tools_mod("zeus_cli.config").format_turn_limit(_cfg_max_turns(cfg))],
             ["Toolsets", ", ".join(cfg.get("enabled_toolsets", [])) or "all"],
             ["Verbose", str(cfg.get("verbose", False))]]},
         {"title": "Environment", "rows": [["Working Dir", os.getcwd()], ["Config File", str(_zeus_home / "config.yaml")]]},

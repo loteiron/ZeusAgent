@@ -187,7 +187,7 @@ def _blank_slate_minimal_toolsets(config: dict):
 
 def _blank_slate_minimize_config(config: dict):
     """Turn OFF every optional config feature; all opt back in via ``zeus setup agent``."""
-    config.setdefault("agent", {})["max_turns"] = 90
+    config.setdefault("agent", {})["max_turns"] = None
     config.setdefault("compression", {})["enabled"] = False
     mem = config.setdefault("memory", {})
     mem["memory_enabled"] = False

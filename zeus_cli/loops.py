@@ -13,8 +13,11 @@ import json
 import logging
 import re
 import time
+import threading
+from functools import wraps
 from dataclasses import dataclass, field, fields, asdict
 from typing import Any, Dict, List, Optional, Tuple
+from zeus_cli.goal_concurrency import GoalStateChanged, save_if_unchanged
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Floor for fixed intervals. Claude Code allows 30s; anything tighter is almost always an
 # accident that burns tokens polling unchanged state. Config loops.min_interval_seconds (clamped ≥ 5).
 DEFAULT_MIN_INTERVAL_SECONDS = 30
-# Backstop tick budget so an unattended loop can't run forever. 0 = unlimited; config loops.max_ticks.
-DEFAULT_MAX_TICKS = 100
+# No implicit lifespan. Operators can opt into a finite loops.max_ticks budget.
+DEFAULT_MAX_TICKS = 0
 # Self-paced mode: start at the floor, double while replies are unchanged, cap at the
 # ceiling, snap back to the floor on any change.
 DEFAULT_SELF_PACED_FLOOR_SECONDS = 60
@@ -372,6 +375,14 @@ def _digest_response(response: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
+def _serialized_loop_control(fn):
+    @wraps(fn)
+    def run(self, *args, **kwargs):
+        with self._mutation_lock:
+            return fn(self, *args, **kwargs)
+    return run
+
+
 class LoopManager:
     """Per-session /loop state + tick decisions.
 
@@ -383,6 +394,8 @@ class LoopManager:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self._state: Optional[LoopState] = load_loop(session_id)
+        self._persisted_snapshot = self._state.to_json() if self._state else None
+        self._mutation_lock = threading.RLock()
 
     @property
     def state(self) -> Optional[LoopState]:
@@ -391,6 +404,7 @@ class LoopManager:
     def refresh(self) -> None:
         """Re-read state from the DB (cross-process safety for the gateway)."""
         self._state = load_loop(self.session_id)
+        self._persisted_snapshot = self._state.to_json() if self._state else None
 
     def is_active(self) -> bool:
         return self._state is not None and self._state.status == "active"
@@ -399,7 +413,12 @@ class LoopManager:
         return self._state is not None and self._state.status in {"active", "paused"}
 
     def _save(self) -> LoopState:
-        save_loop(self.session_id, self._state)
+        db = _get_session_db()
+        if db is None:
+            raise RuntimeError("Loop state could not be saved: session database unavailable")
+        save_if_unchanged(db, _meta_key(self.session_id), self._state,
+                          self._persisted_snapshot, LoopState.from_json)
+        self._persisted_snapshot = self._state.to_json()
         return self._state
 
     def status_line(self) -> str:
@@ -426,6 +445,7 @@ class LoopManager:
             return f"✓ Loop finished ({fired}{_dash(s.last_stop_reason)}): {s.prompt}"
         return f"Loop ({s.status}, {meta}): {s.prompt}"
 
+    @_serialized_loop_control
     def set(
         self,
         prompt: str,
@@ -439,6 +459,7 @@ class LoopManager:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("loop prompt is empty")
+        self.refresh()
 
         now = time.time()
         self_paced = interval_seconds is None
@@ -458,14 +479,18 @@ class LoopManager:
         self._state = state
         return self._save()
 
+    @_serialized_loop_control
     def pause(self, reason: str = "user-paused") -> Optional[LoopState]:
+        self.refresh()
         s = self._state
         if not s or s.status not in {"active", "paused"}:
             return None
         s.status, s.paused_reason, s.awaiting_response = "paused", reason, False
         return self._save()
 
+    @_serialized_loop_control
     def resume(self) -> Optional[LoopState]:
+        self.refresh()
         s = self._state
         if not s or s.status == "cleared":
             return None
@@ -475,7 +500,9 @@ class LoopManager:
         s.next_due_at = time.time() + min(delay, 5.0)
         return self._save()
 
+    @_serialized_loop_control
     def clear(self) -> bool:
+        self.refresh()
         if self._state is None or self._state.status == "cleared":
             return False
         self._state.status = "cleared"
@@ -491,6 +518,26 @@ class LoopManager:
             and (now if now is not None else time.time()) >= s.next_due_at
         )
 
+    @_serialized_loop_control
+    def recover_idle_tick(self, now: Optional[float] = None) -> bool:
+        """Re-arm an overdue orphan only after the driver proves the session idle.
+
+        Recovery is at least once: an interrupted external side effect may already
+        have happened, so retain the attempt count and re-check current state.
+        """
+        s = self._state
+        now = time.time() if now is None else now
+        if not s or s.status != "active" or not s.awaiting_response or now < s.next_due_at:
+            return False
+        s.awaiting_response = False
+        try:
+            self._save()
+        except GoalStateChanged:
+            self.refresh()
+            return False
+        return True
+
+    @_serialized_loop_control
     def fire_tick(self) -> Optional[str]:
         """Claim a due tick; returns the message to inject, or None.
 
@@ -507,7 +554,11 @@ class LoopManager:
         # Provisional schedule from NOW: complete_tick reschedules from turn end, but if the
         # process dies mid-turn this keeps the persisted loop from being 'due' in a tight loop.
         s.next_due_at = s.last_fired_at + (s.current_delay or s.interval_seconds or self_paced_floor_seconds())
-        self._save()
+        try:
+            self._save()
+        except GoalStateChanged:
+            self.refresh()
+            return None
 
         if s.prompt.lstrip().startswith("/"):
             return s.prompt.strip()
@@ -515,6 +566,7 @@ class LoopManager:
         template = WAKEUP_PROMPT_WITH_UNTIL_TEMPLATE if s.until else WAKEUP_PROMPT_TEMPLATE
         return template.format(tick=s.ticks_fired, cadence=cadence, prompt=s.prompt, until=s.until)
 
+    @_serialized_loop_control
     def abandon_tick(self) -> None:
         """Roll back a fired tick whose injection failed (nothing ran)."""
         s = self._state
@@ -522,7 +574,10 @@ class LoopManager:
             return
         s.awaiting_response = False
         s.ticks_fired = max(0, s.ticks_fired - 1)
-        self._save()
+        try:
+            self._save()
+        except GoalStateChanged:
+            self.refresh()
 
     def _stop(self, status: str, reason: str, message: str) -> Dict[str, Any]:
         """Persist a terminal (``done``) or recoverable (``paused``) stop and build the result."""
@@ -536,6 +591,27 @@ class LoopManager:
         return {"status": status, "stopped": True, "reason": reason, "message": message}
 
     def complete_tick(self, last_response: str) -> Dict[str, Any]:
+        # The slow judge works on a private snapshot. Controls stay responsive;
+        # its CAS cannot resurrect a paused/cleared/replaced loop, even when the
+        # UI shares this manager instance with the completion worker.
+        with self._mutation_lock:
+            expected = self._persisted_snapshot
+            worker = object.__new__(LoopManager)
+            worker.session_id = self.session_id
+            worker._state = LoopState.from_json(self._state.to_json()) if self._state else None
+            worker._persisted_snapshot = expected
+        try:
+            result = worker._complete_tick(last_response)
+        except GoalStateChanged:
+            return {"status": "superseded", "stopped": False,
+                    "reason": "loop changed during evaluation", "message": ""}
+        with self._mutation_lock:
+            if self._persisted_snapshot == expected:
+                self._state = worker._state
+                self._persisted_snapshot = worker._persisted_snapshot
+        return result
+
+    def _complete_tick(self, last_response: str) -> Dict[str, Any]:
         """Evaluate the finished wakeup turn and schedule what's next.
 
         Returns ``{"status": "active|done|paused", "stopped": bool, "reason": str, "message": str}``;

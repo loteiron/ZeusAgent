@@ -35,6 +35,9 @@ and setup experience, with coordinated light and dark appearances.
   model endpoints; keep provider credentials in your local configuration.
 - **Organize ongoing tasks.** Delegate to subagents, schedule jobs, and manage
   separate profiles for different configurations and workspaces.
+- **Work autonomously.** `/autonom <task>` creates a standing goal and enables
+  decisions without clarification prompts for the current session. `/autonom off`
+  restores normal behavior; `/stop` stops work and pauses its schedules.
 - **Connect messaging services.** Use the gateway with configured adapters such
   as Telegram, Discord, and Slack. Telegram's `/status` opens controls for status,
   stopping a turn, and pausing or resuming a loop.
@@ -44,6 +47,16 @@ and setup experience, with coordinated light and dark appearances.
   terminal UI, or web dashboard.
 
 ## Recent source updates
+
+The September 15 source changes add session-scoped `/autonom`, remove default
+iteration and schedule caps, and accept `/loop` and `/goal` while another turn
+is running. Follow-up messages steer scheduled work; stopping a session pauses
+its durable schedules. Loop updates reject stale completion results and recover
+abandoned wakeups after a restart.
+
+Three selected Hermes fixes are adapted: responsive background-process waits,
+profile-isolated browser/computer-use caches, and native vision tool availability.
+These are selected ports, not a full synchronization with the latest upstream tree.
 
 The September 13 integration adapts 181 upstream commits while retaining Zeus's
 interfaces, evidence workflow, Telegram controls, and migration tools. The exact
@@ -64,6 +77,36 @@ range and attribution are recorded in [NOTICE.md](NOTICE.md) and
 
 These updates are available in the source tree. Packaged downloads below remain
 the separately versioned v0.22.0 release.
+
+## Autonomous work and recurring tasks
+
+```text
+/autonom fix the failing tests and verify the build
+/autonom status
+/loop 5m check whether the build has finished
+/goal complete the migration and verify it
+/stop
+/autonom off
+```
+
+Autonomy is limited to the current profile and conversation. It makes routine
+decisions, releases pending clarification prompts, and uses the session's explicit
+approval bypass while preserving hard denials and access controls. Missing credentials
+or unavailable services are reported as blockers. A new session or app restart resets
+the mode. Tool output and existing conversation history remain visible as configured.
+
+New configurations have no iteration, goal-turn, or loop-run cap. Explicit positive
+limits in existing configurations are retained; use `agent.max_turns: null`,
+`delegation.max_iterations: null`, `goals.max_turns: 0`, and `loops.max_ticks: 0`
+to remove them. A loop's interval controls how often it runs, not when it expires.
+`--times` and stop conditions remain available when wanted. Goals retain their
+failure guards; recurring loops stop on completion, `/stop`, or a configured stop
+condition. Provider retries within each turn remain bounded, while an active loop
+can try again at its next scheduled wakeup.
+
+Browser tools must be enabled for the messaging profile. `zeus tools` can enable
+the browser for Telegram; an entry in `agent.disabled_toolsets` takes precedence
+over platform defaults. Enabling a tool takes effect on the next turn.
 
 ## Engineering workflow
 

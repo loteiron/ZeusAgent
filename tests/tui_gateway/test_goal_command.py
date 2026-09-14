@@ -19,6 +19,42 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def test_compute_host_receives_session_autonomy_and_can_revoke_it(server, zeus_home, monkeypatch):
+    import io
+    from agent import autonomy
+    from tui_gateway.compute_host import ComputeHost
+    sid, key = "autonomy-host", "autonomy-key"
+    record = {"session_key": key, "history": [], "history_lock": threading.RLock(),
+              "profile_home": str(zeus_home), "agent": None, "running": False}
+    server._sessions[sid] = record
+    host = ComputeHost(stdout=io.StringIO(), heartbeat_secs=0)
+    try:
+        with server._session_profile_runtime_scope(record):
+            autonomy.set_mode(key, True)
+        frame = server._compute_host_turn_frame("r", sid, record, "Finish the tests")
+        assert frame["autonomy_mode"] is True
+        with server._session_profile_runtime_scope(record):
+            autonomy.clear_mode(key)
+        host._ensure_server_session(server, frame)
+        with server._session_profile_runtime_scope(record):
+            assert autonomy.is_enabled(key)
+        host._ensure_server_session(server, {**frame, "autonomy_mode": False})
+        with server._session_profile_runtime_scope(record):
+            assert not autonomy.is_enabled(key)
+        monkeypatch.setenv("ZEUS_COMPUTE_HOST_CHILD", "1")
+        record.update(agent=MagicMock(), running=True)
+        ack = host._control_ack(server, {"sid": sid, "route_name": "slash.autonom",
+                                         "command": "/autonom on", "request_id": "toggle"}, record)
+        assert "error" not in ack
+        with server._session_profile_runtime_scope(record):
+            assert autonomy.is_enabled(key)
+        record["agent"].steer.assert_called_once()
+    finally:
+        with server._session_profile_runtime_scope(record):
+            autonomy.clear_mode(key)
+        host.close()
+
+
 @pytest.fixture()
 def zeus_home(tmp_path, monkeypatch):
     home = tmp_path / ".zeus"
@@ -94,6 +130,81 @@ def session(server):
 def _call(server, method, **params):
     handler = server._methods[method]
     return handler(1, params)
+
+
+def test_autonom_slash_exec_uses_live_session_without_worker(server, session):
+    from agent.autonomy import is_enabled, clear_mode
+    sid, key, state = session
+    state["running"] = True
+    state["agent"] = MagicMock()
+    try:
+        response = _call(server, "slash.exec", session_id=sid, command="/autonom")
+        assert "error" not in response
+        assert is_enabled(key)
+        assert not state.get("slash_worker")
+        state["agent"].steer.assert_called_once()
+        response = _call(server, "slash.exec", session_id=sid, command="/autonom off")
+        assert "error" not in response
+        assert not is_enabled(key)
+    finally:
+        clear_mode(key)
+
+
+def test_stop_slash_pauses_durable_goal_and_loop(server, session, monkeypatch):
+    from zeus_cli.goals import GoalManager
+    from zeus_cli.loops import LoopManager
+    sid, key, state = session
+    monkeypatch.setattr(server, "_tts_stream_stop", lambda: None)
+    GoalManager(key).set("finish tests")
+    LoopManager(key).set("watch tests")
+    result = _call(server, "slash.exec", session_id=sid, command="/stop")
+    assert "error" not in result
+    assert GoalManager(key).state.status == "paused"
+    assert LoopManager(key).state.status == "paused"
+    assert not state.get("slash_worker")
+
+
+@pytest.mark.parametrize("command", ["/loop 5m watch the build", "/goal finish the build"])
+def test_scheduled_work_accepts_live_corrections_without_interrupt(server, session, monkeypatch, command):
+    sid, key, state = session
+    agent = MagicMock()
+    agent.steer.return_value = True
+    state.update(running=True, agent=agent)
+    monkeypatch.setattr(server, "_load_busy_input_mode", lambda: "interrupt")
+    response = _call(server, "slash.exec", session_id=sid, command=command)
+    assert "error" not in response
+    response = server._handle_busy_submit("correction", sid, state, "Use the staging build", None)
+    assert response["result"]["status"] == "steered"
+    agent.steer.assert_called_once_with("Use the staging build")
+    agent.interrupt.assert_not_called()
+    response = server._handle_busy_submit("later", sid, state, "Afterwards check logs", None, queued=True)
+    assert response["result"]["status"] == "queued"
+    assert agent.steer.call_count == 1
+
+
+def test_resumed_schedule_steers_compute_host_turn(server, session, monkeypatch):
+    from zeus_cli.loops import LoopManager
+    sid, key, state = session
+    LoopManager(key).set("watch the build")
+    state.update(running=True, agent=MagicMock())
+    monkeypatch.setattr(server, "_load_busy_input_mode", lambda: "interrupt")
+    server._compute_host_turn_frame("turn", sid, state, "continue")
+    response = server._handle_busy_submit("correction", sid, state, "Use staging", None)
+    assert response["result"]["status"] == "steered"
+    state["agent"].interrupt.assert_not_called()
+
+
+def test_autonom_task_creates_unlimited_goal(server, session):
+    from agent.autonomy import clear_mode
+    from zeus_cli.goals import GoalManager
+    sid, key, state = session
+    try:
+        response = _call(server, "slash.exec", session_id=sid, command="/autonom fix the build")
+        assert response["result"]["type"] == "send"
+        assert GoalManager(key).state.goal == "fix the build"
+        assert GoalManager(key).state.max_turns == 0
+    finally:
+        clear_mode(key)
 
 
 class _InlineThread:

@@ -1879,6 +1879,11 @@ def resolve_turn_limit(raw: Any, default: int = TURN_LIMIT_UNLIMITED) -> int:
     return TURN_LIMIT_UNLIMITED if n <= 0 else n
 
 
+def format_turn_limit(raw: Any) -> str:
+    value = resolve_turn_limit(raw)
+    return "unlimited" if value == TURN_LIMIT_UNLIMITED else str(value)
+
+
 def cfg_get(cfg: Optional[Dict[str, Any]], *keys: str, default: Any = None) -> Any:
     """Traverse nested dict keys safely, returning ``default`` on any miss.
     Explicit ``None`` values are returned as-is (``dict.get`` semantics: ``default`` only when the

@@ -2270,7 +2270,7 @@ def _make_agent(
     platform = _resolve_agent_platform(platform_override)
     ignore_rules = is_truthy_value(os.environ.get("ZEUS_IGNORE_RULES"))
     agent = AIAgent(
-        model=model, max_iterations=_cfg_max_turns(cfg, 500), provider=runtime.get("provider"),
+        model=model, max_iterations=_cfg_max_turns(cfg), provider=runtime.get("provider"),
         base_url=runtime.get("base_url"), api_key=runtime.get("api_key"), api_mode=runtime.get("api_mode"),
         acp_command=runtime.get("command"), acp_args=runtime.get("args"),
         credential_pool=runtime.get("credential_pool"), quiet_mode=True,
@@ -3103,7 +3103,7 @@ _TUI_EXTRA: list[tuple[str, str, str]] = [
 # slash.exec routes them to command.dispatch instead.
 _PENDING_INPUT_COMMANDS: frozenset[str] = frozenset({
     "retry", "queue", "q", "steer", "plan", "goal", "loop", "proactive", "moa", "undo", "learn",
-    "init", "compress", "compact",
+    "init", "compress", "compact", "autonom", "autonomous", "stop",
 })
 
 _WORKER_BLOCKED_COMMANDS: frozenset[str] = frozenset({"snapshot", "snap"})

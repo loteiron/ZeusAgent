@@ -420,6 +420,8 @@ class GatewaySlashCommandsMixin(
         session_entry = await self.async_session_store.get_or_create_session(source)
         session_key = session_entry.session_key
 
+        schedules_paused = await self._pause_session_schedules(event)
+
         async def _stop(key: str, invalidation_reason: str) -> None:
             await self._interrupt_and_clear_session(
                 key, source, interrupt_reason=_INTERRUPT_REASON_STOP,
@@ -454,7 +456,7 @@ class GatewaySlashCommandsMixin(
                 await adapter._stop_typing_with_metadata(source.chat_id, self._reply_metadata(event))
         except Exception:
             logger.debug("Failed to clear typing on /stop with no active agent", exc_info=True)
-        return t("gateway.stop.no_active")
+        return "Stopped scheduled work in this session." if schedules_paused else t("gateway.stop.no_active")
 
     async def _handle_platform_command(self, event: MessageEvent) -> str:
         """Handle ``/platform list|pause|resume [name]`` — inspect and manually control failed/paused

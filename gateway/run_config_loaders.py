@@ -302,6 +302,12 @@ class GatewayConfigLoadersMixin:
 
     def _effective_busy_input_mode(self, source: SessionSource) -> str:
         """Resolve busy input mode from the routed profile startup snapshot."""
+        from agent.autonomy import is_enabled
+        with self._profile_scope_for_source(source):
+            key = self._session_key_for_source(source)
+            state = self._peek_session_state(key)
+            if is_enabled(key) or (state is not None and state.turn.scheduled_work):
+                return "steer"
         return self._effective_busy_mode(source, "_busy_input_mode")
 
     def _effective_busy_text_mode(self, source: SessionSource) -> str:

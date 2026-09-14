@@ -90,6 +90,56 @@ async def test_gateway_loop_create_captures_route(loop_env):
 
 
 @pytest.mark.asyncio
+async def test_new_loop_is_accepted_while_telegram_agent_is_reasoning(loop_env):
+    """Guard 2 must persist the schedule without stopping the current agent."""
+    runner = _make_runner()
+    event = _make_event("/loop 5m check the deploy")
+    event.source.platform = Platform.TELEGRAM
+    event.source.chat_type = "dm"
+    response = await runner._busy_loop_command(event, "live-session", event.source)
+    assert "Loop set" in response
+    assert "/stop before" not in response
+    state = loops.load_loop("sid-gateway-loop")
+    assert state.prompt == "check the deploy"
+    assert state.route["platform"] == "telegram"
+    assert state.max_ticks == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_pauses_goal_and_loop_so_watcher_cannot_restart_them(loop_env):
+    runner = _make_runner()
+    message = _make_event("/stop")
+    loops.LoopManager("sid-gateway-loop").set("watch build")
+    goals.GoalManager("sid-gateway-loop").set("finish build")
+    assert await runner._pause_session_schedules(message)
+    assert loops.load_loop("sid-gateway-loop").status == "paused"
+    assert goals.GoalManager("sid-gateway-loop").state.status == "paused"
+
+
+@pytest.mark.asyncio
+async def test_busy_schedule_creation_makes_followups_steer(loop_env):
+    runner = _make_runner()
+    message = _make_event("/loop 1m watch build")
+    key = runner._session_key_for_source(message.source)
+    runner._busy_input_mode = "interrupt"
+    runner._session_state(key).turn.agent = Mock()
+    await runner._busy_loop_command(message, key, message.source)
+    assert runner._effective_busy_input_mode(message.source) == "steer"
+    runner._session_state(key).turn.clear()
+    assert runner._effective_busy_input_mode(message.source) == "interrupt"
+
+
+@pytest.mark.asyncio
+async def test_new_goal_is_accepted_while_telegram_agent_is_reasoning(loop_env):
+    runner = _make_runner()
+    event = _make_event("/goal finish the deploy")
+    response = await runner._busy_goal_command(event, "live-session", event.source)
+    assert "Goal set" in response
+    assert "/stop before" not in response
+    assert goals.GoalManager("sid-gateway-loop").state.goal == "finish the deploy"
+
+
+@pytest.mark.asyncio
 async def test_gateway_loop_status_pause_stop(loop_env):
     runner = _make_runner()
     await GatewayRunner._handle_loop_command(runner, _make_event("/loop 5m poll CI"))

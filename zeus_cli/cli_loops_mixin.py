@@ -30,6 +30,28 @@ def _print_decision_message(decision: dict) -> bool:
 class CLILoopsMixin:
     """Simple slash-command wrappers plus goal/heartbeat/loop manager hooks for the interactive CLI"""
 
+    def _handle_autonom_command(self, cmd_original: str):
+        from cli import _cprint, _slash_args
+        from agent.autonomy import dispatch_autonomy_command, turn_instruction
+        result = dispatch_autonomy_command(self.session_id, _slash_args(cmd_original))
+        _cprint(result.output)
+        if result.changed:
+            agent = getattr(self, "agent", None)
+            if agent and getattr(self, "_agent_running", False):
+                agent.steer(turn_instruction(self.session_id))
+            clarify = getattr(self, "_clarify_state", None)
+            if result.enabled and isinstance(clarify, dict) and clarify.get("response_queue"):
+                clarify["response_queue"].put("")
+                self._clarify_state = None
+                self._clarify_freetext = False
+            approval = getattr(self, "_approval_state", None)
+            if result.enabled and isinstance(approval, dict) and approval.get("response_queue"):
+                approval["response_queue"].put("once")
+                self._approval_state = None
+        if result.task:
+            self._handle_goal_command(f"/goal {result.task}")
+        return True
+
     def _cmd_exit(self, cmd_original: str):
         # /exit --delete also removes the session's transcripts + SQLite history.
         from cli import _DIM, _RST, _cprint, _slash_args
@@ -331,9 +353,9 @@ class CLILoopsMixin:
             def make(sid):
                 try:
                     goals_cfg = (load_config() or {}).get("goals") or {}
-                    max_turns = int(goals_cfg.get("max_turns", 20) or 20)
+                    max_turns = max(0, int(goals_cfg.get("max_turns", 0) or 0))
                 except Exception:
-                    max_turns = 20
+                    max_turns = 0
                 return GoalManager(session_id=sid, default_max_turns=max_turns, workspace=os.getcwd())
             return make
         manager = self._session_bound_manager("_goal_manager", "goal manager", load)
@@ -427,7 +449,7 @@ class CLILoopsMixin:
         """
         from cli import _DIM, _RST, _cprint
         mgr = self._get_loop_manager()
-        if mgr is None or not mgr.is_due():
+        if mgr is None or getattr(self, "_agent_running", False):
             return
         # The idle poll runs at ~10 Hz; a due-but-deferred tick would otherwise hit the
         # DB (goal_blocks_loop_tick) on every poll. Throttle the re-check.
@@ -446,6 +468,7 @@ class CLILoopsMixin:
                 return
         except Exception:
             pass
+        mgr.recover_idle_tick()
         wakeup = mgr.fire_tick()
         if not wakeup:
             return

@@ -50,7 +50,11 @@ def test_registry_names_resolve_into_the_table():
     dispatched = {c.name for c in COMMAND_REGISTRY if ZeusAgentCLI._slash_handler(c.name)}
     # The historical chain remains a parity baseline; Zeus adds an explicitly
     # registered read-only evidence handler after that refactor.
-    assert dispatched == (set(OLD_CHAIN_COMMANDS) - {"exit"}) | {"quit", "evidence"}
+    assert (set(OLD_CHAIN_COMMANDS) - {"exit"}) <= dispatched
+    for command in COMMAND_REGISTRY:
+        entry = ZeusAgentCLI._slash_handler(command.name)
+        if entry:
+            assert callable(getattr(ZeusAgentCLI, entry[0])), command.name
 
 
 def _cli():

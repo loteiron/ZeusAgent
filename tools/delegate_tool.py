@@ -12,6 +12,7 @@ tool calls or reasoning.
 """
 
 import logging
+import sys
 import time
 import weakref
 from typing import Any, Dict, List, Optional
@@ -66,7 +67,7 @@ def _normalize_role(r: Optional[str]) -> str:
         return "leaf"
     return r_norm
 
-DEFAULT_MAX_ITERATIONS = 250
+DEFAULT_MAX_ITERATIONS = sys.maxsize
 _HEARTBEAT_INTERVAL = 30  # seconds between parent activity heartbeats during delegation
 # Stale-heartbeat thresholds (cycles of _HEARTBEAT_INTERVAL with no progress). Progress = iteration, current_tool OR
 # last_activity_ts advancing; an in-flight model wait refreshes last_activity_ts, so slow models are not "idle". Idle
@@ -448,7 +449,8 @@ def delegate_task(
         )
 
     cfg = _load_config()
-    default_max_iter = cfg.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+    from zeus_cli.config import resolve_turn_limit
+    default_max_iter = resolve_turn_limit(cfg.get("max_iterations"))
     # Caller-supplied max_iterations is ignored: the config value is authoritative
     # so budgets stay predictable (kwarg kept for internal callers/tests).
     if max_iterations is not None and max_iterations != default_max_iter:

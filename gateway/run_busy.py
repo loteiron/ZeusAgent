@@ -763,7 +763,7 @@ class GatewayBusySessionMixin:
     _PLAIN_COMMANDS = (
         "status", "context", "restart", "approve", "deny", "pause", "agents", "bg", "btw",
         "kanban", "subgoal", "heartbeat", "busy", "yolo", "verbose", "footer", "help",
-        "commands", "profile", "provider", "update", "version", "experience",
+        "commands", "profile", "provider", "update", "version", "experience", "autonom",
     )
     # Dispatched only on the idle path (busy dispatch has its own allowlist).
     _IDLE_COMMANDS = (
@@ -876,6 +876,7 @@ class GatewayBusySessionMixin:
     async def _busy_stop_command(self, event: MessageEvent, quick_key: str, source):
         # Hard-kill: a soft interrupt can't reach a truly hung executor thread.
         from gateway.run import _INTERRUPT_REASON_STOP
+        await self._pause_session_schedules(event)
         await self._interrupt_and_clear_session(
             quick_key, source, interrupt_reason=_INTERRUPT_REASON_STOP, invalidation_reason="stop_command",
         )
@@ -954,20 +955,14 @@ class GatewayBusySessionMixin:
         return f"⏩ Steer queued — arrives after the next tool call: '{preview}'"
 
     async def _busy_goal_command(self, event: MessageEvent, quick_key: str, source):
-        # Control verbs are safe mid-run (state only); setting new goal text is rejected so we don't
-        # race a second continuation against the current turn. wait/gate take an argument.
-        from zeus_cli.goal_command import is_goal_control
-
-        if is_goal_control(event.get_command_args() or ""):
-            return await self._handle_goal_command(event)
-        return "Agent is running — use /goal status / pause / clear / wait mid-run, or /stop before setting a new goal."
+        # The shared handler replaces goal state and enqueues one kickoff at a
+        # legal turn boundary. It never starts a second agent beside this one.
+        return await self._handle_goal_command(event)
 
     async def _busy_loop_command(self, event: MessageEvent, quick_key: str, source):
-        # Mirrors /goal: control verbs are safe mid-run; a new loop is rejected.
-        _loop_arg = (event.get_command_args() or "").strip().lower()
-        if not _loop_arg or _loop_arg in {"status", "pause", "resume", "stop", "clear", "cancel", "help", "--help", "-h"}:
-            return await self._handle_loop_command(event)
-        return "Agent is running — use /loop status / pause / stop mid-run, or /stop before setting a new loop."
+        # Creation only persists a schedule. The watcher admits it at the next idle
+        # boundary, so it neither interrupts this turn nor starts a concurrent one.
+        return await self._handle_loop_command(event)
 
     def _check_slash_access(self, source: SessionSource, canonical_cmd: str) -> Optional[str]:
         """Denial message if ``source`` cannot run ``canonical_cmd``, else None (both dispatch paths

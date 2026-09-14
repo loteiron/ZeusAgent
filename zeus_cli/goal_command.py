@@ -136,8 +136,9 @@ def _set(mgr, arg, *, drafting, last_user_message, render, progress):
         headline, contract = goals.parse_contract(arg)
         contract = contract if not contract.is_empty() else None
     state = mgr.set(headline or arg, contract=contract)
-    output = render("gateway.goal.set", "⊙ Goal set ({budget}-turn budget): {goal}",
-                    budget=state.max_turns, goal=state.goal)
+    output = (render("gateway.goal.set", "⊙ Goal set ({budget}-turn budget): {goal}",
+                     budget=state.max_turns, goal=state.goal) if state.max_turns else
+              f"⊙ Goal set (unlimited turns): {state.goal}")
     if state.has_contract():
         label = "Drafted completion contract:" if drafting else "Completion contract:"
         output += f"\n{label}\n{state.contract.render_block()}"
@@ -150,8 +151,9 @@ def _set(mgr, arg, *, drafting, last_user_message, render, progress):
     else:
         against = " against the contract above" if state.has_contract() else ""
         output += (f"\nAfter each turn, a judge model checks if the goal is done{against}. "
-                   "ZeusAgent keeps working until it is, you pause/clear it, or the budget is "
-                   "exhausted. Use /goal status, /goal show, /goal pause, /goal resume, /goal clear.")
+                   "ZeusAgent keeps working until achieved, blocked, or paused/cleared. "
+                   "Explicitly configured budgets still apply. "
+                   "Use /goal status, /goal show, /goal pause, /goal resume, /goal clear.")
     return GoalCommandResult(output, goals.goal_kick_prompt(state.goal, last_user_message), kickoff=True)
 
 

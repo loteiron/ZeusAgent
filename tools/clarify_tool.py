@@ -171,6 +171,9 @@ def _run_batch(normalized: List[dict], callback, question: str) -> str:
             timed_out = bool(raw.get("timed_out"))
         return _batch_result(normalized, answers, timed_out)
     for entry in normalized:
+        from agent.autonomy import is_enabled, clarification_result
+        if is_enabled():
+            return clarification_result()
         raw = _invoke_callback(callback, entry["question"], entry["choices"], entry["multi_select"])
         if _is_timeout(raw):
             timed_out = True
@@ -196,6 +199,9 @@ def clarify_tool(question: str, choices: Optional[List[str]] = None, multi_selec
     normalized list in one call; platforms without it are looped one question at a time. Injected by the
     agent runner (cli.py / gateway).
     """
+    from agent.autonomy import is_enabled, clarification_result
+    if is_enabled():
+        return clarification_result()
     if questions is not None:
         normalized, error = _normalize_questions(questions)
         if error:
@@ -204,7 +210,8 @@ def clarify_tool(question: str, choices: Optional[List[str]] = None, multi_selec
             if callback is None:
                 return tool_error(_UNAVAILABLE)
             try:
-                return _run_batch(normalized, callback, str(question or "").strip())
+                result = _run_batch(normalized, callback, str(question or "").strip())
+                return clarification_result() if is_enabled() else result
             except Exception as exc:
                 return tool_error(f"Failed to get user input: {exc}")
         # Empty questions array → fall through to the single-question path.
@@ -225,6 +232,8 @@ def clarify_tool(question: str, choices: Optional[List[str]] = None, multi_selec
         raw_response = _invoke_callback(callback, question, shown, multi_select)
     except Exception as exc:
         return tool_error(f"Failed to get user input: {exc}")
+    if is_enabled():
+        return clarification_result()
     return json.dumps({"question": question, "choices_offered": choices,
                        "user_response": _clean_answer(raw_response, multi_select and choices is not None)},
                       ensure_ascii=False)

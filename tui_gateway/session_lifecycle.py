@@ -372,6 +372,18 @@ def _ws_session_is_orphaned(session: dict | None) -> bool:
     return bool(_ws_session_is_detached(session) and not session.get("running"))
 
 
+def _stop_session_work(sid: str, session: dict, *, request_id: str | None = None) -> bool:
+    """Explicit user stop: pause wakeups and retire the crash-recovery marker."""
+    from zeus_cli.schedule_control import pause_session_schedules
+    with _session_profile_runtime_scope(session):
+        pause_session_schedules(str(session.get("session_key") or sid))
+        isolated = _interrupt_session_turn(sid, session, request_id=request_id)
+        with session["history_lock"]:
+            active_marker_key = str(session.pop("_active_turn_marker_key", "") or "")
+        _retire_turn_marker(session, active_marker_key)
+    return isolated
+
+
 def _interrupt_session_turn(sid: str, session: dict, *, request_id: str | None = None) -> bool:
     """Apply the shared ``session.interrupt`` contract to one claimed session; returns whether the compute-host control
     channel was used. The WS orphan reaper reuses this so a dead client gets the same partial-history/queue semantics."""

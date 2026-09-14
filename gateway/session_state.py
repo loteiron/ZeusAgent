@@ -23,6 +23,7 @@ class TurnState:
     started_ts: float = 0.0  # 0.0 = not running
     lease: Any = None  # cross-process active-session slot lease
     busy_ack_ts: float = 0.0  # debounce; 0.0 = never acked
+    scheduled_work: bool = False  # follow-up messages steer a loop/goal turn
     # Held turn-lease token + acquiring generation: release/rebind match only when the
     # generation is current, so a stale unwind can never free a newer turn's lease.
     lease_token: Any = None
@@ -32,6 +33,7 @@ class TurnState:
         """Reset the per-turn slot.  The caller pops ``lease`` first to release it."""
         self.agent = self.lease = None
         self.started_ts = self.busy_ack_ts = 0.0
+        self.scheduled_work = False
 
 
 @dataclass

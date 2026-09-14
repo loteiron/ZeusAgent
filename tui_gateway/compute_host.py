@@ -291,6 +291,15 @@ class ComputeHost:
             session = self._build_server_session(server, frame, sid)
         if isinstance(frame.get("attached_images"), list):
             session["attached_images"] = list(frame.get("attached_images") or [])
+        if "autonomy_mode" in frame:
+            from agent import autonomy
+            with server._session_profile_runtime_scope(session):
+                key = str(session.get("session_key") or sid)
+                value = frame["autonomy_mode"]
+                if value is None:
+                    autonomy.clear_mode(key)
+                elif isinstance(value, bool):
+                    autonomy.set_mode(key, value)
         return session
 
     def _build_server_session(self, server: Any, frame: dict[str, Any], sid: str) -> dict:
@@ -412,6 +421,12 @@ class ComputeHost:
         sid = str(frame.get("sid") or "")
         route_name = str(frame.get("route_name") or "")
         command = str(frame.get("command") or "")
+        if route_name == "slash.autonom":
+            response = server._cmd_autonom(frame.get("request_id"), {"session_id": sid}, session,
+                                           "autonom", command.removeprefix("/autonom").strip())
+            if "error" in response:
+                return {"error": response["error"].get("message", "Autonomy control failed")}
+            return {"output": response.get("result", {}).get("output", "")}
         if route_name in {"session.save", "session.compress"}:
             params = {"session_id": sid}
             if route_name == "session.compress":

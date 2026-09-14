@@ -32,9 +32,9 @@ def _active_goal_manager(session: dict):
     """The session's GoalManager when a goal is active, else None."""
     from zeus_cli.goals import GoalManager
     try:
-        max_turns = int((_load_cfg().get("goals") or {}).get("max_turns", 20) or 20)
+        max_turns = max(0, int((_load_cfg().get("goals") or {}).get("max_turns", 0) or 0))
     except Exception:
-        max_turns = 20
+        max_turns = 0
     goal_mgr = GoalManager(
         session_id=str(session.get("session_key") or ""), default_max_turns=max_turns,
         workspace=_session_cwd(session))
@@ -450,6 +450,8 @@ def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images
         scopes.secret = set_secret_scope(build_profile_secret_scope(Path(profile_home)))
         from tools.terminal_scope import install_profile_terminal_scope
         scopes.terminal = install_profile_terminal_scope(Path(profile_home))
+    from zeus_cli.schedule_control import has_active_schedule
+    session["_scheduled_work"] = has_active_schedule(session["session_key"])
     # The sudo password callback is thread-local: without re-wiring here, sudo prompts
     # fall through to /dev/tty and hang the headless gateway (re-run is a no-op).
     _wire_callbacks(sid)

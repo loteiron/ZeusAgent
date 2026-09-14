@@ -34,6 +34,61 @@ def _mgr_call(prefix: str, fn, *args, errors=(RuntimeError, ValueError)):
 class GatewayGoalCommandsMixin:
     """Autonomy-loop gateway commands: /goal, /subgoal, /heartbeat, /loop, /refine, /review."""
 
+    async def _pause_session_schedules(self, event):
+        """/stop must also prevent an idle scheduler from restarting cancelled work."""
+        entry = await self._session_entry_for_manager(event, "stop schedules")
+        if entry is None:
+            return False
+
+        def pause():
+            from zeus_cli.schedule_control import pause_session_schedules
+            return pause_session_schedules(entry.session_id)
+
+        paused = await self._run_in_executor_with_context(pause)
+        self._clear_goal_continuations(event, "stop")
+        return paused
+
+    async def _handle_autonom_command(self, event: MessageEvent) -> str:
+        from gateway.config import Platform
+        from gateway.slash_access import _coerce_id_list, policy_from_extra
+        from agent.autonomy import dispatch_autonomy_command, turn_instruction
+
+        source = event.source
+        if (event.internal or source is None or source.chat_type != "dm" or not source.user_id):
+            return "Autonomous mode requires a private chat with its configured owner."
+        adapter = self._adapter_for_source(source)
+        config = getattr(adapter, "config", None)
+        multiplexed = getattr(self.config, "multiplex_profiles", False)
+        if config is None and not multiplexed:
+            config = getattr(self.config, "platforms", {}).get(source.platform)
+        extra = getattr(config, "extra", {}) or {}
+        policy = policy_from_extra(extra, "dm")
+        allowed = extra.get("allow_from")
+        if "allow_from" not in extra and not multiplexed and source.platform == Platform.TELEGRAM:
+            from gateway.authz_mixin import _platform_gate_env
+            allowed = _platform_gate_env("TELEGRAM_ALLOWED_USERS")
+        owners = policy.admin_user_ids if policy.enabled else _coerce_id_list(allowed)
+        if str(source.user_id) not in owners:
+            return "Autonomous mode requires an explicit owner in allow_admin_from or allow_from."
+        key = self._session_key_for_source(source)
+        with self._profile_scope_for_source(source):
+            result = dispatch_autonomy_command(key, event.get_command_args() or "")
+            if result.changed:
+                if result.enabled:
+                    from tools.approval import resolve_gateway_approval
+                    from tools.clarify_gateway import clear_session
+                    resolve_gateway_approval(key, "once", resolve_all=True)
+                    clear_session(key)
+                state = self._peek_session_state(key)
+                agent = state.turn.agent if state else None
+                if agent is not None and callable(getattr(agent, "steer", None)):
+                    agent.steer(turn_instruction(key))
+            if result.task:
+                task_event = MessageEvent(text=f"/goal {result.task}", source=source,
+                                          message_id=event.message_id, channel_prompt=event.channel_prompt)
+                return result.output + "\n" + await self._handle_goal_command(task_event)
+        return result.output
+
     async def _handle_goal_command(self, event: MessageEvent) -> str:
         from zeus_cli.goal_command import dispatch_goal_command
         from zeus_cli.goals import last_user_message_from_db
@@ -59,6 +114,10 @@ class GatewayGoalCommandsMixin:
         # Drafting resolves profile-scoped credentials. Keep ContextVars across the
         # executor hop; manager I/O must also stay off the messaging event loop.
         result = await self._run_in_executor_with_context(dispatch)
+        if mgr.state and mgr.state.status == "active":
+            self._session_state(self._session_key_for_source(event.source)).turn.scheduled_work = True
+        if result.kickoff:
+            self._clear_goal_continuations(event, "replace")
         if result.clear_pending:
             self._clear_goal_continuations(event, result.clear_pending)
         if result.prompt:
@@ -90,6 +149,7 @@ class GatewayGoalCommandsMixin:
                     source=event.source,
                     message_id=event.message_id if kickoff else None,
                     channel_prompt=event.channel_prompt if kickoff else None,
+                    metadata={"scheduled_work": True},
                 )
                 self._enqueue_fifo(quick_key, turn, adapter)
         except Exception as exc:
@@ -292,8 +352,11 @@ class GatewayGoalCommandsMixin:
                 route = {k: v for k, v in route.items() if v}
         except Exception:
             route = {}
-        result = dispatch_loop_command(mgr, (event.get_command_args() or "").strip(), route=route)
+        result = await self._run_in_executor_with_context(
+            lambda: dispatch_loop_command(mgr, (event.get_command_args() or "").strip(), route=route))
         output = result.get("output") or ""
+        if mgr.state and mgr.state.status == "active":
+            self._session_state(self._session_key_for_source(event.source)).turn.scheduled_work = True
         if result.get("created") and _quiet_bool(lambda: goal_blocks_loop_tick(mgr.session_id)):
             output += (
                 "\nNote: an active /goal is driving this session — loop "

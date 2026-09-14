@@ -237,6 +237,11 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
     ``steer`` → inject after the current atomic action. ``queued=True`` (client queue drain) forces queue mode: a "run
     after" message must NEVER become a live correction."""
     mode = "queue" if queued else _load_busy_input_mode()
+    if not queued:
+        from agent.autonomy import is_enabled
+        with _session_profile_runtime_scope(session):
+            if is_enabled(session.get("session_key") or sid) or session.get("_scheduled_work"):
+                mode = "steer"
     agent = session.get("agent")
     with session["history_lock"]:
         if not session.get("running"):

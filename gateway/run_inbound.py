@@ -1302,6 +1302,7 @@ class GatewayInboundMixin:
             _claim_state.turn.lease = _active_session_lease
         _claim_state.turn.agent = _AGENT_PENDING_SENTINEL
         _claim_state.turn.started_ts = time.time()
+        _claim_state.turn.scheduled_work = bool(event.metadata.get("scheduled_work"))
         self._persist_active_agents()
         _run_generation = self._begin_session_run_generation(_quick_key)
 

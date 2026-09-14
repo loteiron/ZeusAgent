@@ -43,6 +43,20 @@ The retained shell installer exposes helper contracts only; source installation
 uses `scripts/setup_zeus.py` and reuses the supported interpreter running it.
 Published release installers keep their separately pinned managed runtime.
 
+The September 15 source update adapts three selected Hermes changes from the
+reviewed upstream snapshot `1ad89ac018f26a4f21817ebf37bb09f508656d63`:
+
+- Responsive `process_manage` waits during steering, by Teknium, itself a port
+  of MoonshotAI/kimi-code#3697:
+  https://github.com/NousResearch/hermes-agent/commit/cbd4492f1fc3b336619a7871b5dae94b86975693
+- Browser and computer-use caches scoped to the served profile, by teknium1:
+  https://github.com/NousResearch/hermes-agent/commit/71cebc63488c017635994bd92d5a5c98f08acd84
+  Zeus also scopes the older computer-use call locks and approval caches.
+- Native main-model vision availability for image and browser tools, by teknium1:
+  https://github.com/NousResearch/hermes-agent/commit/53183d50167d642c337232b44e4c94e718f0e620
+
+The remaining commits in that newer range are not claimed as integrated.
+
 The original MIT license in `LICENSE` is preserved verbatim. Copyright notices,
 contributor credits, third-party licenses, external service identities and model IDs
 remain their respective owners' property. Renaming does not replace these obligations.

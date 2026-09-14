@@ -249,6 +249,8 @@ def clear_session(session_key: str) -> None:
     """Remove all approval and yolo state for a given session."""
     if not session_key:
         return
+    from agent.autonomy import clear_mode
+    clear_mode(session_key)
     with _lock:
         _session_approved.pop(session_key, None)
         _session_yolo.discard(session_key)
@@ -285,7 +287,8 @@ def is_current_session_yolo_enabled() -> bool:
 def _yolo_active() -> bool:
     """CLI ``--yolo`` (process-scoped, frozen at import) or gateway ``/yolo``
     (session-scoped). Hardline / deny-rule floors run BEFORE this everywhere."""
-    return _YOLO_MODE_FROZEN or is_current_session_yolo_enabled()
+    from agent.autonomy import is_enabled
+    return _YOLO_MODE_FROZEN or is_current_session_yolo_enabled() or is_enabled()
 
 
 def is_approved(session_key: str, pattern_key: str) -> bool:
@@ -372,7 +375,9 @@ def is_approval_bypass_active_for_session(session_key: str) -> bool:
     """Canonical three-source bypass check: process ``--yolo`` (frozen at import), the
     session-scoped gateway ``/yolo`` toggle, ``approvals.mode: off``. Pure bypass
     sub-expression only — hardline blocklist / permanent allowlist are the caller's job."""
-    return (_YOLO_MODE_FROZEN or is_session_yolo_enabled(session_key) or approval_context._get_approval_mode() == "off")
+    from agent.autonomy import is_enabled
+    return (_YOLO_MODE_FROZEN or is_session_yolo_enabled(session_key) or is_enabled(session_key)
+            or approval_context._get_approval_mode() == "off")
 
 
 def is_approval_bypass_active() -> bool:

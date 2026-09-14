@@ -892,6 +892,10 @@ def build_turn_context(
         original_user_message=original_user_message, messages=messages,
         conversation_history=conversation_history,
     )
+    from agent.autonomy import turn_instruction
+    autonomous_note = turn_instruction()
+    if autonomous_note:
+        plugin_user_context = "\n\n".join(filter(None, (plugin_user_context, autonomous_note)))
     plugin_user_context = _merge_gateway_notes(
         agent, messages, current_turn_user_idx, plugin_user_context
     )

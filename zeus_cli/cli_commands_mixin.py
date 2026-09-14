@@ -888,11 +888,14 @@ class CLICommandsMixin:
 
     # ---- /stop, /agents -------------------------------------------------------------------
     def _handle_stop_command(self):
-        """Handle /stop — kill all running background processes and background (async) delegations.
-        Separate from interrupt (stop the current turn), as in Codex.
-
-        See #14602.
-        """
+        """Stop current work, pause its schedules and clean up background work."""
+        from zeus_cli.schedule_control import pause_session_schedules
+        paused = pause_session_schedules(getattr(self, "session_id", ""))
+        if getattr(self, "_agent_running", False):
+            from agent.interrupt_compat import request_hard_interrupt
+            request_hard_interrupt(getattr(self, "agent", None))
+        if paused:
+            print("  Paused session schedules.")
         from tools.process_registry import process_registry
         running = [p for p in process_registry.list_sessions() if p.get("status") == "running"]
         # Background subagents live in their own registry, not the process registry.

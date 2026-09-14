@@ -497,7 +497,8 @@ class CLIChatTurnMixin:
         self._ring_bell(context="turn complete")  # propagates over SSH
         if turn.result and not turn.result.get("completed") and not turn.result.get("interrupted"):
             _api_calls = turn.result.get("api_calls", 0)
-            _max_iter = getattr(self.agent, "max_iterations", 500)
+            from zeus_cli.config import TURN_LIMIT_UNLIMITED
+            _max_iter = getattr(self.agent, "max_iterations", TURN_LIMIT_UNLIMITED)
             if _api_calls >= _max_iter:
                 _cprint(
                     f"\n{_DIM}⚠ Iteration budget reached ({_api_calls}/{_max_iter}) — "

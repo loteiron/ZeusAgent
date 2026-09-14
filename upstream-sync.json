@@ -5,5 +5,15 @@
   "upstream_target": "d595e636c83aa0b9606d4e914e1140ae9c796897",
   "commits_reviewed": 181,
   "date": "2026-09-13",
-  "scope": "Incremental port of this commit range, preserving Zeus extensions; not a full upstream tree replacement."
+  "scope": "Incremental port of this commit range, preserving Zeus extensions; not a full upstream tree replacement.",
+  "selected_updates": {
+    "date": "2026-09-15",
+    "reviewed_snapshot": "1ad89ac018f26a4f21817ebf37bb09f508656d63",
+    "commits": [
+      "cbd4492f1fc3b336619a7871b5dae94b86975693",
+      "71cebc63488c017635994bd92d5a5c98f08acd84",
+      "53183d50167d642c337232b44e4c94e718f0e620"
+    ],
+    "scope": "Selected responsive-wait, browser/computer-use profile isolation, and native vision fixes. Remaining newer commits are not integrated."
+  }
 }

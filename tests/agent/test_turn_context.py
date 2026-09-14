@@ -214,6 +214,27 @@ def test_returns_turn_context_with_user_message_appended():
     assert ctx.active_system_prompt == "SYSTEM"
 
 
+def test_autonomy_only_enriches_the_new_turn_and_preserves_cached_prefix(tmp_path, monkeypatch):
+    import copy
+    from agent.autonomy import set_mode, clear_mode
+    from tools.approval_context import set_current_session_key, reset_current_session_key
+    monkeypatch.setenv("ZEUS_HOME", str(tmp_path))
+    history = [{"role": "user", "content": "Earlier request"},
+               {"role": "assistant", "content": "Earlier answer"}]
+    before = copy.deepcopy(history)
+    token = set_current_session_key("sess-1")
+    try:
+        set_mode("sess-1", True)
+        ctx = _build(_FakeAgent(), conversation_history=history, user_message="Continue")
+        assert ctx.messages[:len(before)] == before
+        assert ctx.active_system_prompt == "SYSTEM"
+        assert ctx.messages[-1]["content"] == "Continue"
+        assert "Autonomous mode enabled" in ctx.messages[-1]["api_content"]
+    finally:
+        clear_mode("sess-1")
+        reset_current_session_key(token)
+
+
 def test_preflight_timeout_stops_turn_before_provider_boundary():
     """An unchanged oversized payload must not escape turn construction."""
     agent = _FakeAgent()
