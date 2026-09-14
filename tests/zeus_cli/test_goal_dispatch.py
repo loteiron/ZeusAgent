@@ -23,13 +23,12 @@ def _surface(surface, mgr, monkeypatch, prompts=None):
                 prompts.append(cli._pending_input.get_nowait())
         return execute
     if surface == "gateway":
-        from gateway.run_busy import GatewayBusySessionMixin
-        from gateway.slash_commands_goals import GatewayGoalCommandsMixin
+        from gateway.run import GatewayRunner
 
-        class Runner(GatewayBusySessionMixin, GatewayGoalCommandsMixin):
-            pass
-
-        runner = object.__new__(Runner)
+        # Exercise the real lazy session state used by busy scheduling as well as
+        # the goal command mixins; a mixin-only stub omits that shared contract.
+        runner = object.__new__(GatewayRunner)
+        runner._session_key_for_source = lambda source: mgr.session_id
         async def manager(event):
             return mgr, None
         async def execute(fn, *args):
