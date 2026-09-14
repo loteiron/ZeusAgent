@@ -45,7 +45,15 @@ def test_compute_host_line_json_hello_and_shutdown():
     try:
         hello = _read_json_line(out)
         assert hello["type"] == "hello"
-        assert hello["host_pid"] == proc.pid
+        if os.name == "nt" and hello["host_pid"] != proc.pid:
+            # A Windows venv python.exe can be a redirector; verify the actual
+            # interpreter belongs to our launcher instead of comparing wrapper PIDs.
+            import psutil
+            interpreter = psutil.Process(hello["host_pid"])
+            assert interpreter.ppid() == proc.pid
+            assert "tui_gateway.compute_host" in interpreter.cmdline()
+        else:
+            assert hello["host_pid"] == proc.pid
 
         proc.stdin.write(json.dumps({"type": "bogus", "request_id": "b"}) + "\n")
         proc.stdin.flush()

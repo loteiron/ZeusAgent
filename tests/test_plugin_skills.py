@@ -221,12 +221,14 @@ class TestSkillViewQualifiedName:
 
     def test_platform_gate_applies_before_supporting_file(self, tmp_path):
         from tools.skills_tool import skill_view
+        import sys
+        unsupported = "linux" if sys.platform == "win32" else "windows"
 
         md = self._register_skill(
             tmp_path,
             content=(
                 "---\nname: writing-plans\ndescription: desc\n"
-                "platforms: [windows]\n---\nBody.\n"
+                f"platforms: [{unsupported}]\n---\nBody.\n"
             ),
         )
         reference = md.parent / "references" / "guide.md"
