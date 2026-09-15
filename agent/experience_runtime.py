@@ -19,6 +19,9 @@ def settings() -> dict:
 
     return {"enabled": is_truthy_value(raw.get("enabled", True), default=True),
             "recall_enabled": is_truthy_value(raw.get("recall_enabled", True), default=True),
+            "automatic_review": is_truthy_value(raw.get("automatic_review", True), default=True),
+            "quiet": is_truthy_value(raw.get("quiet", True), default=True),
+            "review_interval": bounded("review_interval", 3, 1, 100),
             "max_cases": bounded("max_cases", 500, 1, 5000),
             "observations_per_case": bounded("observations_per_case", 24, 4, 100)}
 
@@ -51,7 +54,7 @@ def learn_from_check(event: dict) -> dict | None:
             if len(json.dumps(learned, ensure_ascii=True)) > 3200:
                 learned["recall"].pop()
                 break
-    if learned["needs_explanation"]:
+    if learned["needs_explanation"] and not config["automatic_review"]:
         learned["annotation_hint"] = (
             "If the cause and repair are known, save a concise hypothesis using "
             f"zeus experience explain {learned['id']} --cause <cause> --resolution <repair> "

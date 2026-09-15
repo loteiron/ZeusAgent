@@ -201,6 +201,53 @@ def _build(agent, **overrides):
     return build_turn_context(**kwargs)
 
 
+def test_recalled_experience_reaches_wire_without_changing_history(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from copy import deepcopy
+    from agent.verification_evidence import begin_verify_run, record_verify_run
+    from agent.experience_store import ExperienceStore
+    from agent.turn_context import build_api_messages
+    from tools.terminal_tool import record_session_cwd, clear_session_cwd
+
+    monkeypatch.setenv("ZEUS_HOME", str(tmp_path / "profile"))
+    root = tmp_path / "project"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    source = root / "app.py"
+    for answer in (1, 2):
+        source.write_text(f"answer = {answer}\n", encoding="utf-8")
+        event = record_verify_run(root=root, session_id="repair", ok=answer == 2,
+            output="passed" if answer == 2 else "AssertionError: wrong answer",
+            workspace_before=begin_verify_run(root=root, session_id="repair"))
+    ExperienceStore().explain(event["experience"]["id"], root=root,
+        cause="Default answer mismatch", resolution="Set the default answer to 2")
+    history = [{"role": "user", "content": "Earlier request", "api_content": "Earlier cached request"},
+               {"role": "assistant", "content": "Earlier reply"}]
+    before = deepcopy(history)
+    agent = _FakeAgent()
+    record_session_cwd(agent.session_id, str(root))
+    agent._copy_reasoning_content_for_api = lambda *args: None
+    agent._should_sanitize_tool_calls = lambda: False
+    agent.ephemeral_system_prompt = ""
+    try:
+        ctx = _build(agent, user_message="Fix the wrong answer in app.py", conversation_history=history,
+                     task_id=agent.session_id)
+        wire, system = build_api_messages(agent, ctx.messages,
+            current_turn_user_idx=ctx.current_turn_user_idx, ext_prefetch_cache=ctx.ext_prefetch_cache,
+            plugin_user_context=ctx.plugin_user_context, moa_config=None, active_system_prompt=ctx.active_system_prompt)
+        assert history == before and ctx.messages[:len(before)] == before
+        assert agent._cached_system_prompt == system == "SYSTEM"
+        assert ctx.messages[-1]["content"] == "Fix the wrong answer in app.py"
+        assert "Set the default answer to 2" in wire[-1]["content"]
+        assert "historical_data" in wire[-1]["content"]
+        assert "api_content" not in json.dumps(wire)
+        assert wire[0]["content"] == "SYSTEM"
+        assert wire[1]["content"] == "Earlier cached request"
+    finally:
+        clear_session_cwd(agent.session_id)
+
+
 def test_returns_turn_context_with_user_message_appended():
     agent = _FakeAgent()
     ctx = _build(agent)

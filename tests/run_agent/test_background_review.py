@@ -223,6 +223,48 @@ def test_background_review_releases_clients_without_closing_shared_session(monke
     ]
 
 
+def test_review_fork_saves_evidence_bound_lesson_for_next_conversation(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from agent.experience_store import ExperienceStore
+    from agent.experience_review import turn_recall
+    from agent.verification_evidence import begin_verify_run, record_verify_run
+    from tools.terminal_tool import record_session_cwd, clear_session_cwd
+
+    monkeypatch.setenv("ZEUS_HOME", str(tmp_path / "profile"))
+    root = tmp_path / "project"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    for answer in (1, 2):
+        (root / "app.py").write_text(f"answer = {answer}\n", encoding="utf-8")
+        event = record_verify_run(root=root, session_id="repair", ok=answer == 2,
+            output="passed" if answer == 2 else "AssertionError: wrong answer",
+            workspace_before=begin_verify_run(root=root, session_id="repair"))
+    case_id = event["experience"]["id"]
+    calls = []
+
+    class Reviewer(FakeReviewAgent):
+        def run_conversation(self, **kwargs):
+            calls.append(kwargs)
+            assert case_id in kwargs["user_message"]
+            return {"completed": True, "final_response": json.dumps({"experience_lessons": [{
+                "id": case_id, "cause": "Wrong initial answer", "resolution": "Use answer 2 and check again"}]})}
+
+    monkeypatch.setattr(run_agent_module, "AIAgent", Reviewer)
+    monkeypatch.setattr(run_agent_module.threading, "Thread", ImmediateThread)
+    agent = _bare_agent()
+    record_session_cwd(agent.session_id, str(root))
+    try:
+        AIAgent._spawn_background_review(agent, messages_snapshot=[{"role": "user", "content": "Fix the answer"}],
+                                        review_memory=True)
+        assert len(calls) == 1
+        assert ExperienceStore().show(case_id, root=root)["resolution"] == "Use answer 2 and check again"
+        assert "Use answer 2 and check again" in turn_recall(_bare_agent(), "Fix the wrong answer", agent.session_id)
+        assert not ExperienceStore().review_candidates(root)
+    finally:
+        clear_session_cwd(agent.session_id)
+
+
 def test_background_review_fork_opts_out_of_session_finalization(monkeypatch):
     """The review fork shares the parent's live session_id, so it must set
     ``_end_session_on_close = False``. Otherwise close() (now finalizing owned

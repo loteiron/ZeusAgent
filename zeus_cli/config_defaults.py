@@ -1193,9 +1193,12 @@ DEFAULT_CONFIG = {
         },
     },
     "experience": {
-        # Local check outcomes only; never adds a model call or rewrites the system prompt.
+        # Check outcomes are local; lesson consolidation reuses the background review fork.
         "enabled": True,
         "recall_enabled": True,
+        "automatic_review": True,
+        "quiet": True,
+        "review_interval": 3,
         "max_cases": 500,
         "observations_per_case": 24,
     },

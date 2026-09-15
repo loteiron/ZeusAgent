@@ -130,6 +130,28 @@ def test_final_response_closes_tool_tail_before_persistence(monkeypatch):
     assert agent.persisted_messages[-1] == result["messages"][-1]
 
 
+def test_completed_user_correction_queues_learning_after_persistence(monkeypatch):
+    monkeypatch.setattr("zeus_cli.plugins.invoke_hook", lambda *_a, **_kw: [])
+    agent = FakeAgent()
+    agent._memory_enabled = True
+    agent.valid_tool_names = {"memory", "skill_manage"}
+    requests = []
+
+    def spawn(**kwargs):
+        assert agent.persisted_messages[-1]["content"] == "Understood."
+        requests.append(kwargs)
+
+    agent._spawn_background_review = spawn
+    text = "Bundan sonra açıklamalarını kısa tut"
+    result = finalize_turn(agent, final_response="Understood.", api_call_count=1,
+        interrupted=False, failed=False, messages=[{"role": "user", "content": text}],
+        conversation_history=[], effective_task_id="task", turn_id="turn", user_message=text,
+        original_user_message=text, _should_review_memory=False, _turn_exit_reason="final_response")
+    assert result["final_response"] == "Understood."
+    assert len(requests) == 1
+    assert requests[0]["review_memory"] and requests[0]["review_skills"]
+
+
 def test_fallback_timestamp_survives_delayed_sqlite_persistence(
     monkeypatch, tmp_path
 ):
@@ -446,4 +468,3 @@ def test_delivery_only_reasoning_excerpt_does_not_fill_blank_assistant(monkeypat
         and "only internal reasoning" in (m.get("content") or "")
         for m in result["messages"]
     )
-

@@ -589,11 +589,17 @@ def finalize_turn(
     agent.clear_interrupt()
     agent._stream_callback = None  # don't leak into future calls
 
+    from agent.experience_review import review_signals
+    learn_memory, learn_skills = review_signals(
+        agent, original_user_message, effective_task_id,
+        completed=bool(completed and not failed and not interrupted))
+    _should_review_memory = _should_review_memory or learn_memory
+
     # Skill trigger is checked NOW — based on how many tool iterations THIS turn used.
     _should_review_skills = (
-        agent._skill_nudge_interval > 0
+        learn_skills or (agent._skill_nudge_interval > 0
         and agent._iters_since_skill >= agent._skill_nudge_interval
-        and "skill_manage" in agent.valid_tool_names
+        and "skill_manage" in agent.valid_tool_names)
     )
     if _should_review_skills:
         agent._iters_since_skill = 0

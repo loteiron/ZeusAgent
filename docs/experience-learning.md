@@ -12,16 +12,41 @@ model weights or certify a model-generated explanation.
    source during both checks, changed source between them, and a passing run that
    started after the failure completed. Different commands, targets or sessions
    cannot supply the initial recovery evidence.
-3. Zeus can attach a proposed cause, repair, failed approach to avoid and conditions
-   of applicability with `zeus experience explain`. These are always hypotheses;
-   editing the explanation cannot change a check result or certify the cause.
-4. A later local `read_file` can recall related experience before the next edit.
-   A repeated failed check also returns relevant notes. These are bounded additions
-   to new tool results, with no system-prompt rewrite or additional model call.
+3. The existing background memory/skill reviewer can attach a proposed cause,
+   repair, failed approach and applicability conditions automatically. Its annotations
+   are hypotheses; they cannot change check results. Late reviews cannot overwrite
+   newer verification evidence or a manually revised explanation.
+4. Before a relevant request, Zeus recalls up to three project experiences in the
+   current user message's API context. A local `read_file` and repeated failed check
+   can also recall related evidence. Historical messages and the cached system prompt
+   remain unchanged. Retrieval itself makes no model call.
 5. Changed source invalidates the previous result's freshness. A later session may
    re-run a previously repaired check to refresh the observed source identity.
    This does not count as another recovery unless another failure/repair pair was
    actually observed.
+
+## Quiet learning during normal use
+
+No learning command is required. After three meaningful completed turns in a
+conversation, Zeus requests its existing background memory/skill review. Explicit
+corrections such as "from now on" or "bundan sonra" request it after that response.
+This is turn-based, not a fixed number of minutes. Short greetings and acknowledgements
+do not advance this new trigger. Existing memory/skill triggers remain available;
+local-model idle scheduling, cancellation and review cost controls still apply.
+
+The reviewer can save explicit durable preferences, consolidate memory and create or
+improve eligible managed skills. It is instructed to merge duplicates, preserve scope,
+replace superseded preferences and record procedure prerequisites and verification
+steps. Protected skills and SOUL are not rewritten by this review. No change is the
+correct outcome when there is no useful new lesson. Review summaries stay out of chat
+by default; operational failures remain in logs.
+
+Memory, skills and verification experiences persist in the active profile. Later
+sessions can load those memories and skills; project experiences are recalled only
+inside the same resolved Git project. This improves the context and procedures
+available to the model, rather than retraining its weights. Selecting a skill and
+interpreting a lesson still depend on the model. A successful test is evidence for
+that test, not proof that a proposed solution is universally correct.
 
 ## Outcome states
 
@@ -64,11 +89,17 @@ root, edit explanations or delete records.
 experience:
   enabled: true
   recall_enabled: true
+  automatic_review: true
+  quiet: true
+  review_interval: 3
   max_cases: 500
   observations_per_case: 24
 ```
 
-Automatic capture and recall can be disabled independently. Existing records remain
+Automatic capture, recall and experience consolidation can be disabled independently.
+`automatic_review: false` disables the new conversational trigger and pre-turn
+experience recall/consolidation; the existing memory/skill review settings still apply.
+`quiet: false` restores existing review notifications. Existing records remain
 inspectable. File-read recall respects the agent's `skip_memory` setting. At most
 32 distinct experiences are recalled through file reads per agent conversation;
 each reminder is bounded and a case is not repeatedly injected. Background check

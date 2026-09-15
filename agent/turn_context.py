@@ -562,6 +562,8 @@ def _hydrate_from_history(agent: Any, conversation_history: Optional[List[Any]])
                     "restored native checkpoint hydration skipped", exc_info=True
                 )
         # Hydrate per-session nudge counters from persisted history.
+        from agent.experience_review import restore_review_cadence
+        restore_review_cadence(agent, conversation_history)
         prior_user_turns = sum(1 for m in conversation_history if m.get("role") == "user")
         if prior_user_turns > 0:
             agent._user_turn_count = prior_user_turns
@@ -902,6 +904,10 @@ def build_turn_context(
 
     _bind_interrupt_scope(agent, ra)
     ext_prefetch_cache = _memory_turn_start_and_prefetch(agent, original_user_message)
+    from agent.experience_review import turn_recall
+    agent._learning_task_id = effective_task_id
+    learned_context = turn_recall(agent, original_user_message, effective_task_id)
+    ext_prefetch_cache = "\n\n".join(filter(None, (ext_prefetch_cache, learned_context)))
 
     # Sidecar skipped for codex_app_server/MoA.
     if (

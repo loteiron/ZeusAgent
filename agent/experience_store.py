@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS experiences (
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     recovery_fingerprint TEXT NOT NULL DEFAULT '',
     recovery_count INTEGER NOT NULL DEFAULT 0,
+    reviewed_revision TEXT NOT NULL DEFAULT '',
     last_recovery_failure TEXT NOT NULL DEFAULT '', last_verified_at TEXT NOT NULL DEFAULT '',
     counterexample_json TEXT,
     UNIQUE(root, check_key, signature)
@@ -122,6 +123,8 @@ class ExperienceStore:
             conn.executescript(_SCHEMA)
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
+                if "reviewed_revision" not in {row[1] for row in conn.execute("PRAGMA table_info(experiences)")}:
+                    conn.execute("ALTER TABLE experiences ADD COLUMN reviewed_revision TEXT NOT NULL DEFAULT ''")
                 yield conn
         finally:
             conn.close()
@@ -280,3 +283,35 @@ class ExperienceStore:
         detail = self.show(case_id, root=root)
         with self._connect() as conn:
             return conn.execute("DELETE FROM experiences WHERE id=? AND root=?", (case_id, detail["root"])).rowcount > 0
+
+    def review_candidates(self, root) -> list[dict]:
+        """Only observed repairs/counterexamples; never convert a bare failure into advice."""
+        if not self.path.exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM experiences WHERE root=? AND state IN ('recovered','contradicted') "
+                "AND reviewed_revision!=updated_at ORDER BY updated_at DESC LIMIT 3",
+                (str(Path(root).resolve()),)).fetchall()
+            cases = []
+            for row in rows:
+                item = dict(row)
+                item["evidence"] = [json.loads(r[0]) for r in conn.execute(
+                    "SELECT receipt_json FROM observations WHERE experience_id=? ORDER BY created_at DESC LIMIT 3",
+                    (item["id"],))]
+                cases.append(item)
+            return cases
+
+    def save_review(self, case: dict, lesson: dict) -> bool:
+        """CAS prevents a late review from erasing a newer outcome or a user explanation."""
+        values = [_text(lesson.get(key, "")) for key in ("cause", "resolution", "avoid", "conditions")]
+        if not values[0].strip() or not values[1].strip():
+            return False
+        with self._connect() as conn:
+            return conn.execute(
+                "UPDATE experiences SET cause=?,resolution=?,avoid=?,conditions=?,reviewed_revision=? "
+                "WHERE id=? AND root=? AND updated_at=? AND state=? AND recovery_fingerprint=? "
+                "AND cause=? AND resolution=? AND avoid=? AND conditions=? AND reviewed_revision!=updated_at",
+                (*values, case["updated_at"], case["id"], case["root"], case["updated_at"], case["state"],
+                 case["recovery_fingerprint"], case["cause"], case["resolution"],
+                 case["avoid"], case["conditions"])).rowcount == 1

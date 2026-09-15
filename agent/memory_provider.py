@@ -40,6 +40,7 @@ class RecallStatus:
 TRIVIAL_PROMPT_RE = re.compile(
     r'^(yes|no|ok|okay|sure|thanks|thank you|y|n|yep|nope|yeah|nah|'
     r'hi|hey|hello|yo|sup|'
+    r'selam|merhaba|tamam|evet|hayır|tesekkurler|teşekkürler|sağ ol|sag ol|'
     r'continue|go ahead|do it|proceed|got it|cool|nice|great|done|next|lgtm|k)'
     r'[\s!?.:;,"' + "'" + r'~\u2018\u2019\u201c\u201d\u2014\u2013\u2026()\[\]{}<>*&^%$#@!+=`\u00a0]*$',
     re.IGNORECASE,

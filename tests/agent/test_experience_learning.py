@@ -54,6 +54,109 @@ def test_real_failed_check_and_repair_become_a_durable_experience(tmp_path, monk
     assert "wrong answer" in detail["symptom"]
 
 
+def test_background_lesson_is_reused_in_another_turn_without_a_command(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agent.experience_review import prepare_review, apply_review, turn_recall
+    from tools.terminal_tool import record_session_cwd, clear_session_cwd
+
+    root = project(tmp_path, monkeypatch)
+    check(root)
+    (root / "app.py").write_text("answer = 2\n", encoding="utf-8")
+    check(root)
+    agent = SimpleNamespace(session_id="first", skip_memory=False, _delegate_depth=0)
+    record_session_cwd("first", str(root))
+    record_session_cwd("next", str(root))
+    try:
+        bundle = prepare_review(agent)
+        case = bundle["cases"][0]
+        response = json.dumps({"experience_lessons": [{"id": case["id"],
+            "cause": "The default answer did not match the check.",
+            "resolution": "Set the default answer to 2 and rerun check.py.",
+            "conditions": "For this project's default answer contract."}]})
+        assert apply_review(bundle, {"final_response": response, "completed": True}) == 1
+        next_agent = SimpleNamespace(session_id="next", skip_memory=False, _delegate_depth=0)
+        recalled = turn_recall(next_agent, "Fix the wrong answer in app.py", "next")
+        assert "Set the default answer to 2" in recalled
+        assert "hypothesis" in recalled
+        assert "experience_lessons" not in turn_recall(next_agent, "selam", "next")
+    finally:
+        clear_session_cwd("first")
+        clear_session_cwd("next")
+
+
+def test_late_or_foreign_review_cannot_overrule_new_evidence(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agent.experience_review import prepare_review, apply_review, turn_recall
+    from agent.experience_store import ExperienceStore
+    from tools.terminal_tool import record_session_cwd, clear_session_cwd
+
+    root = project(tmp_path, monkeypatch)
+    check(root)
+    (root / "app.py").write_text("answer = 2\n", encoding="utf-8")
+    check(root)
+    agent = SimpleNamespace(session_id="first", skip_memory=False, _delegate_depth=0)
+    record_session_cwd("first", str(root))
+    try:
+        bundle = prepare_review(agent)
+        case = bundle["cases"][0]
+        response = {"completed": True, "final_response": json.dumps({"experience_lessons": [
+            {"id": case["id"], "cause": "old assumption", "resolution": "old repair"}]})}
+        monkeypatch.setenv("ZEUS_HOME", str(tmp_path / "other-profile"))
+        assert apply_review(bundle, response) == 0
+        assert turn_recall(agent, "wrong answer", "first") == ""
+        monkeypatch.setenv("ZEUS_HOME", str(tmp_path / "private"))
+        check(root, session="counterexample", expected="3")
+        assert apply_review(bundle, response) == 0
+        detail = ExperienceStore().show(case["id"], root=root)
+        assert detail["state"] == "contradicted" and not detail["resolution"]
+        for bad in ({**response, "completed": False}, {**response, "interrupted": True},
+                    {**response, "final_response": '{"experience_lessons": ['}):
+            assert apply_review(prepare_review(agent), bad) == 0
+        nested = root / "nested"
+        nested.mkdir()
+        subprocess.run(["git", "init", "-q", str(nested)], check=True)
+        record_session_cwd("first", str(nested))
+        assert turn_recall(agent, "wrong answer", "first") == ""
+    finally:
+        clear_session_cwd("first")
+
+
+def test_legacy_database_migrates_and_late_review_preserves_manual_conditions(tmp_path, monkeypatch):
+    import sqlite3
+    from agent.experience_store import ExperienceStore
+
+    root = project(tmp_path, monkeypatch)
+    check(root)
+    (root / "app.py").write_text("answer = 2\n", encoding="utf-8")
+    result = check(root)
+    store = ExperienceStore()
+    store.explain(result["experience"]["id"], root=root, cause="Default mismatch", resolution="Use answer 2")
+    # Reproduce the actual prior on-disk schema, with existing rows retained.
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("ALTER TABLE experiences DROP COLUMN reviewed_revision")
+    case = ExperienceStore().review_candidates(root)[0]
+    store.explain(case["id"], root=root, cause=case["cause"], resolution=case["resolution"],
+                  conditions="Only the original configuration was tested")
+    assert not store.save_review(case, {"cause": "Assumed cause", "resolution": "Assumed repair"})
+    assert store.show(case["id"], root=root)["conditions"] == "Only the original configuration was tested"
+
+
+def test_corrupt_experience_database_does_not_abort_background_memory_review(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agent.experience_review import prepare_review
+    from tools.terminal_tool import record_session_cwd, clear_session_cwd
+
+    root = project(tmp_path, monkeypatch)
+    profile = tmp_path / "private"
+    profile.mkdir(exist_ok=True)
+    (profile / "experience.db").write_bytes(b"Not a SQLite database")
+    record_session_cwd("corrupt-review", str(root))
+    try:
+        assert prepare_review(SimpleNamespace(session_id="corrupt-review")) == {}
+    finally:
+        clear_session_cwd("corrupt-review")
+
+
 def test_same_source_failure_and_success_are_unstable_not_a_learned_repair(tmp_path, monkeypatch):
     from agent.experience_store import ExperienceStore
 

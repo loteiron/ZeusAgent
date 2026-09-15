@@ -366,13 +366,12 @@ _DO_NOT_CAPTURE_BLOCK = (
 )
 
 _SKILL_REVIEW_PROMPT = (
-    "Review the conversation above and update the skill library. Be ACTIVE — most sessions produce "
-    "at least one skill update, even if small. A pass that does nothing is a missed learning "
-    "opportunity, not a neutral outcome.\n\n"
+    "Review the conversation above for reusable lessons supported by evidence. Update the skill "
+    "library when a durable lesson improves an existing procedure or warrants a new one. "
+    "Saving nothing is correct when there is no new lesson.\n\n"
     "Target shape of the library: CLASS-LEVEL skills, each with a SKILL.md of always-on rules and a "
     "small `references/` set of topical depth. Not a flat list of narrow one-session skills, and "
-    "not an umbrella hoarding a references/ file per session. This shapes HOW you update, not "
-    "WHETHER you update.\n\n" + _LESSON_LAYER_BLOCK +
+    "not an umbrella hoarding a references/ file per session.\n\n" + _LESSON_LAYER_BLOCK +
     "Signals to look for (any one of these warrants action):\n"
     "  • User corrected your style, tone, format, legibility, or verbosity. Frustration signals "
     "like 'stop doing X', 'this is too verbose', 'don't format like this', 'why are you "
@@ -456,9 +455,8 @@ _COMBINED_REVIEW_PROMPT = (
     "**Memory**: who the user is. Did the user reveal persona, desires, preferences, personal "
     "details, or expectations about how you should behave? Save facts about the user and durable "
     "preferences with the memory tool.\n\n"
-    "**Skills**: how to do this class of task. Be ACTIVE — most sessions produce at least one "
-    "skill update. A pass that does nothing is a missed learning opportunity, not a neutral "
-    "outcome.\n\n"
+    "**Skills**: how to do this class of task. Preserve reusable, supported lessons and improve "
+    "outdated procedures. Saving nothing is correct when no durable lesson emerged.\n\n"
     "Target shape of the skill library: CLASS-LEVEL skills with a SKILL.md of always-on rules and a "
     "small `references/` set of topical depth — not narrow one-session skills, and not an umbrella "
     "hoarding a references/ file per session.\n\n" + _LESSON_LAYER_BLOCK +
@@ -1019,15 +1017,19 @@ def _run_review_fork(
         _reset_background_review_read_marks()
     try:
         if review_run is None or review_run.begin_request(st.review_agent):
+            from agent.experience_review import prepare_review, review_context, apply_review
+            bundle = prepare_review(agent)
             # Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads).
-            st.review_agent.run_conversation(
+            review_result = st.review_agent.run_conversation(
                 user_message=(
                     prompt + "\n\nYou can only call memory and skill "
                     "management tools. Other tools will be denied "
-                    "at runtime — do not attempt them." + prompt_extra
+                    "at runtime — do not attempt them." + prompt_extra + review_context(bundle)
                 ),
                 conversation_history=_digest_history(messages_snapshot) if _routed else messages_snapshot,
             )
+            if review_run is None or not review_run.cancel_requested.is_set():
+                apply_review(bundle, review_result)
     finally:
         clear_thread_tool_whitelist()
         # Attribute usage to the PARENT session. Snapshot BEFORE unregister/close so counters
@@ -1116,13 +1118,16 @@ def _run_review_in_thread(
             )
             actions = []
         _log_review_completion(st.review_usage, _classify_review_result(actions))
-        if actions:
+        from agent.experience_runtime import settings as experience_settings
+        if actions and not experience_settings()["quiet"]:
             _publish_review_summary(agent, actions)
     except Exception as e:
         logger.warning("Background memory/skill review failed: %s", e)
         if st.review_usage:
             _log_review_completion(st.review_usage, "error")
-        agent._emit_auxiliary_failure("background review", e)
+        from agent.experience_runtime import settings as experience_settings
+        if not experience_settings()["quiet"]:
+            agent._emit_auxiliary_failure("background review", e)
     finally:
         # Safety net for the exception path (setup failures before the request-phase finally).
         # Both cleanups are identity-scoped and idempotent; re-enter thread-scoped silence so
@@ -1157,6 +1162,8 @@ def spawn_background_review_thread(
     # Per-agent overrides (agent._MEMORY_REVIEW_PROMPT etc.) keep working.
     name = _PROMPT_NAME_BY_SCOPE[(review_memory, review_skills)]
     prompt = getattr(agent, name, globals()[name])
+    from agent.experience_review import REVIEW_RULES
+    prompt += REVIEW_RULES
     if focus := (focus or "").strip():
         prompt = (
             f"{prompt}\n\nThe user explicitly requested this review with the following "
