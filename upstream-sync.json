@@ -15,5 +15,20 @@
       "53183d50167d642c337232b44e4c94e718f0e620"
     ],
     "scope": "Selected responsive-wait, browser/computer-use profile isolation, and native vision fixes. Remaining newer commits are not integrated."
+  },
+  "file_reliability_updates": {
+    "date": "2026-09-16",
+    "reviewed_snapshot": "5910de20bc9839fdd36e791a9d72ba2c2e722f66",
+    "commits": [
+      "a8af57fcd219bac1fe59d8be5b41c9e22aa4af17",
+      "dddefaefaebbf00753bcaceaabb7808546dc156d",
+      "804707bea620bec5281043a8705deafa22e87af3",
+      "88c04e655feef97df9558e901f53069051c5af47",
+      "ab782a7685aeda5da834e3a330266c4680530f9a",
+      "faf71eb4c1c0b0335dc401205b274e075469ddc0",
+      "07e6461dfeea09b4d68a4d52dda88506272d74a7",
+      "bc3df8a4d58e180ab46cf27b947e13e75a07ba51"
+    ],
+    "scope": "Selected stale-write, paginated-read baseline, off-loop checkpoint maintenance, Telegram skill resolution, and NT-namespace access fixes. Zeus adds pre-rename transport length and SHA-256 verification. Other upstream changes are not claimed as integrated."
   }
 }
