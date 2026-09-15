@@ -26,7 +26,7 @@ def project(tmp_path, monkeypatch):
 
 def check(root, session="first", command="zeus verify --skip-start", expected="2"):
     before = begin_verify_run(root=root, session_id=session, command=command)
-    result = subprocess.run([sys.executable, "-B", "check.py"], cwd=root, capture_output=True, text=True,
+    result = subprocess.run([sys.executable, "-B", "check.py"], cwd=root, capture_output=True, text=True, encoding="utf-8",
                             env={**os.environ, "CHECK_EXPECTED": expected})
     return record_verify_run(root=root, session_id=session, command=command,
                              ok=result.returncode == 0, output=result.stdout + result.stderr,

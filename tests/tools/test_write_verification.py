@@ -62,7 +62,7 @@ class TestWriteVerification:
     def test_transport_verification_failure_preserves_existing_file(self, workdir):
         # An interrupted integrity check must not replace the last complete file.
         f = workdir / "ok.txt"
-        f.write_text("last complete version\n")
+        f.write_text("last complete version\n", encoding="utf-8")
         assert "error" not in json.loads(read_file_tool(str(f), task_id="t-wv2"))
         import tools.file_operations as fo
 
@@ -76,4 +76,4 @@ class TestWriteVerification:
         with mock_patch.object(fo.ShellFileOperations, "_exec", flaky_exec):
             r = json.loads(write_file_tool(str(f), "replacement content\n", task_id="t-wv2"))
         assert "error" in r
-        assert f.read_text() == "last complete version\n"
+        assert f.read_text(encoding="utf-8") == "last complete version\n"
