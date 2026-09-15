@@ -1,11 +1,12 @@
 """Tests for write_file post-write content verification (verified flag)."""
 
 import json
+import os
 from unittest.mock import patch as mock_patch
 
 import pytest
 
-from tools.file_tools import write_file_tool
+from tools.file_tools import read_file_tool, write_file_tool
 
 
 @pytest.fixture
@@ -33,11 +34,13 @@ class TestWriteVerification:
         # still report verified.
         f = workdir / "win.txt"
         f.write_bytes(b"old line\r\n")
+        assert "error" not in json.loads(read_file_tool(str(f), task_id="t-wv"))
         r = json.loads(write_file_tool(str(f), "new line\nsecond\n", task_id="t-wv"))
         assert "error" not in r
         assert r.get("verified") is True
         assert b"\r\n" in f.read_bytes()
 
+    @pytest.mark.skipif(os.name == "nt", reason="Exercises the POSIX shell checksum transport")
     def test_hash_mismatch_is_hard_error(self, workdir):
         f = workdir / "bad.txt"
         import tools.file_operations as fo
@@ -52,11 +55,15 @@ class TestWriteVerification:
         with mock_patch.object(fo.hashlib, "sha256", _WrongHash):
             r = json.loads(write_file_tool(str(f), "actual content\n", task_id="t-wv"))
         assert "error" in r
-        assert "did not persist" in r["error"]
+        assert "checksum mismatch" in r["error"]
+        assert not f.exists()
 
-    def test_verification_failure_never_breaks_write(self, workdir):
-        # sha256sum unavailable/failing -> verified omitted, write still ok.
+    @pytest.mark.skipif(os.name == "nt", reason="Exercises the POSIX shell checksum transport")
+    def test_transport_verification_failure_preserves_existing_file(self, workdir):
+        # An interrupted integrity check must not replace the last complete file.
         f = workdir / "ok.txt"
+        f.write_text("last complete version\n")
+        assert "error" not in json.loads(read_file_tool(str(f), task_id="t-wv2"))
         import tools.file_operations as fo
 
         real_exec = fo.ShellFileOperations._exec
@@ -67,7 +74,6 @@ class TestWriteVerification:
             return real_exec(self, cmd, **kw)
 
         with mock_patch.object(fo.ShellFileOperations, "_exec", flaky_exec):
-            r = json.loads(write_file_tool(str(f), "content lands anyway\n", task_id="t-wv2"))
-        assert "error" not in r
-        assert f.read_text() == "content lands anyway\n"
-        assert "verified" not in r or r.get("verified") is None
+            r = json.loads(write_file_tool(str(f), "replacement content\n", task_id="t-wv2"))
+        assert "error" in r
+        assert f.read_text() == "last complete version\n"
