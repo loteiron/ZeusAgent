@@ -257,6 +257,9 @@ def test_review_fork_saves_evidence_bound_lesson_for_next_conversation(tmp_path,
     try:
         AIAgent._spawn_background_review(agent, messages_snapshot=[{"role": "user", "content": "Fix the answer"}],
                                         review_memory=True)
+        # Only the review runs synchronously. Workspace hashing below uses a real
+        # thread pool on Linux and must retain Python's normal Thread constructor.
+        monkeypatch.setattr(run_agent_module.threading, "Thread", _REAL_THREAD)
         assert len(calls) == 1
         assert ExperienceStore().show(case_id, root=root)["resolution"] == "Use answer 2 and check again"
         assert "Use answer 2 and check again" in turn_recall(_bare_agent(), "Fix the wrong answer", agent.session_id)
