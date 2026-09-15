@@ -373,6 +373,8 @@ class ShellFileOperations(LintMixin, SearchMixin, FileOperations):
         q_path = self._escape_shell_arg(path)
         q_parent = self._escape_shell_arg(os.path.dirname(path) or ".")
         tmpl = self._escape_shell_arg(".zeus-tmp.XXXXXX")
+        payload = content.encode("utf-8", errors="surrogateescape")
+        expected_hash = hashlib.sha256(payload).hexdigest()
         script = (
             "set -e; "
             # One shell script, fully quoted. Notes: - `mkdir -p "$d"` is folded in here so the parent
@@ -400,12 +402,26 @@ class ShellFileOperations(LintMixin, SearchMixin, FileOperations):
             '|| mktemp "$d/.zeus-tmp.$$.XXXXXX" 2>/dev/null '
             '|| { tmp="$d/.zeus-tmp.$$"; : > "$tmp" && echo "$tmp"; })"; '
             '[ -n "$tmp" ] || { echo "atomic write: could not create temp file" >&2; exit 1; }; '
-            "trap 'rm -f \\\"$tmp\\\"' EXIT; "
+            "trap 'rm -f \"$tmp\"' EXIT; "
             'if [ -e "$t" ]; then '
             'm="$(stat -c%a "$t" 2>/dev/null || stat -f%Lp "$t" 2>/dev/null || true)"; '
             '[ -n "$m" ] && chmod "$m" "$tmp" 2>/dev/null || true; '
             "fi; "
             'cat > "$tmp"; '
+            # EOF can arrive early with a successful cat exit (broken transport).
+            # Validate the staged bytes BEFORE replacing the last complete file.
+            f'[ "$(wc -c < "$tmp" | tr -d "[:space:]")" = "{len(payload)}" ] '
+            '|| { echo "atomic write: incomplete content transfer; original preserved" >&2; exit 1; }; '
+            'if command -v sha256sum >/dev/null 2>&1; then '
+            'digest="$(sha256sum < "$tmp")"; '
+            'elif command -v shasum >/dev/null 2>&1; then '
+            'digest="$(shasum -a 256 < "$tmp")"; '
+            'elif command -v openssl >/dev/null 2>&1; then '
+            'digest="$(openssl dgst -sha256 -r < "$tmp")"; '
+            'else echo "atomic write: SHA-256 verifier unavailable; original preserved" >&2; exit 1; fi; '
+            'digest=${digest%% *}; '
+            f'[ "$digest" = "{expected_hash}" ] '
+            '|| { echo "atomic write: content checksum mismatch; original preserved" >&2; exit 1; }; '
             # new file: umask-default perms instead of mktemp's 0600 (#70856). Runs AFTER cat so a
             # write-masking umask can't EACCES the stream; quoted "=rw" so zsh doesn't =word-expand it.
             'if [ ! -e "$t" ]; then chmod "=rw" "$tmp" 2>/dev/null || true; fi; '
