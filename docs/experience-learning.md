@@ -41,8 +41,13 @@ steps. Protected skills and SOUL are not rewritten by this review. No change is 
 correct outcome when there is no useful new lesson. Review summaries stay out of chat
 by default; operational failures remain in logs.
 
-Memory, skills and verification experiences persist in the active profile. Later
-sessions can load those memories and skills; project experiences are recalled only
+Memory, skills and verification experiences persist in the active profile. On a
+meaningful new request, a bounded, freshly loaded memory snapshot is also supplied
+in that request's API context. It uses the existing memory threat filter and respects
+memory enablement; the live session's frozen memory and historical messages are
+not rewritten. Newly learned preferences can therefore reach the next turn in an
+already open Telegram conversation. Later sessions can load saved skills as well;
+project experiences are recalled only
 inside the same resolved Git project. This improves the context and procedures
 available to the model, rather than retraining its weights. Selecting a skill and
 interpreting a lesson still depend on the model. A successful test is evidence for
