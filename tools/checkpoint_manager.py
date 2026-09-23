@@ -812,11 +812,15 @@ class CheckpointManager:
         return targets
 
     def get_working_dir_for_path(self, file_path: str) -> str:
-        """Resolve a file path to its working directory (nearest project-marker ancestor)."""
+        """Resolve to the nearest registered checkpoint root or project-marker ancestor."""
         path = _normalize_path(file_path)
         candidate = path if path.is_dir() else path.parent
         check = candidate
         while check != check.parent:
+            # An explicitly checkpointed scratch directory owns its write ledger,
+            # even when a parent has a project marker. This also survives restart.
+            if _project_meta_path(_store_path(CHECKPOINT_BASE), _project_hash(str(check))).is_file():
+                return str(check)
             if any((check / m).exists() for m in _PROJECT_MARKERS):
                 return str(check)
             check = check.parent
@@ -1021,7 +1025,7 @@ def _rmtree_counted(child: Path, result: Dict[str, int], key: str, fail_fmt: str
     """rmtree ``child``, crediting bytes + ``result[key]``; failures count as ``errors`` when tracked."""
     try:
         size = _dir_size_bytes(child)
-        shutil.rmtree(child)
+        _remove_checkpoint_tree(child)
         result["bytes_freed"] += size
         result[key] += 1
     except OSError as exc:
@@ -1207,6 +1211,21 @@ def store_status(checkpoint_base: Optional[Path] = None) -> Dict:
     return out
 
 
+def _remove_checkpoint_tree(path: Path) -> None:
+    """Git objects are read-only on Windows; retry only their failed unlink."""
+    def retry_readonly_unlink(function, filename, exc_info):
+        exc = exc_info[1]
+        target = Path(filename)
+        if (os.name != "nt" or not isinstance(exc, PermissionError)
+                or function not in (os.unlink, os.remove) or target.is_symlink()
+                or not target.resolve().is_relative_to(path.resolve())):
+            raise exc
+        target.chmod(target.stat().st_mode | 0o200)
+        function(filename)
+
+    shutil.rmtree(path, onerror=retry_readonly_unlink)
+
+
 def clear_all(checkpoint_base: Optional[Path] = None) -> Dict[str, int]:
     """Nuke the entire checkpoint base (store + legacy).  Irreversible.
     Returns ``{"bytes_freed": N, "deleted": bool}``."""
@@ -1216,7 +1235,7 @@ def clear_all(checkpoint_base: Optional[Path] = None) -> Dict[str, int]:
         return out
     size = _dir_size_bytes(base)
     try:
-        shutil.rmtree(base)
+        _remove_checkpoint_tree(base)
         out.update(bytes_freed=size, deleted=True)
     except OSError as exc:
         logger.warning("Could not clear checkpoint base %s: %s", base, exc)

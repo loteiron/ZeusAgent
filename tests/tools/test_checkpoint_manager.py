@@ -608,8 +608,8 @@ class TestWorkingDirResolution:
         _real_exists = _pl.Path.exists
 
         def _guarded_exists(self):
-            s = str(self)
-            stop = str(tmp_path)
+            s = self.as_posix()
+            stop = tmp_path.as_posix()
             if not s.startswith(stop) and any(
                 s.endswith("/" + m) or s == "/" + m
                 for m in (".git", "pyproject.toml", "package.json",
@@ -648,7 +648,7 @@ class TestGitEnvIsolation:
         env = _git_env(
             store, str(work), index_file=store / "indexes" / "abc",
         )
-        assert env["GIT_INDEX_FILE"].endswith("indexes/abc")
+        assert Path(env["GIT_INDEX_FILE"]) == store / "indexes" / "abc"
 
         # ~ in the work tree is expanded.
         tilde_work = fake_home / "work"
