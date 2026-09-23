@@ -1,6 +1,7 @@
 """Tests for the /refine focus parameter on spawn_background_review_thread."""
 
 from unittest.mock import MagicMock
+from agent.experience_review import REVIEW_RULES
 
 from agent.background_review import (
     _COMBINED_REVIEW_PROMPT,
@@ -23,17 +24,18 @@ def test_no_focus_prompt_is_byte_identical():
     _target, prompt = spawn_background_review_thread(
         agent, [], review_memory=True, review_skills=True
     )
-    assert prompt == _COMBINED_REVIEW_PROMPT
+    expected = _COMBINED_REVIEW_PROMPT + REVIEW_RULES
+    assert prompt == expected
 
     _target, prompt = spawn_background_review_thread(
         agent, [], review_memory=True, review_skills=True, focus=None
     )
-    assert prompt == _COMBINED_REVIEW_PROMPT
+    assert prompt == expected
 
     _target, prompt = spawn_background_review_thread(
         agent, [], review_memory=True, review_skills=True, focus="   "
     )
-    assert prompt == _COMBINED_REVIEW_PROMPT
+    assert prompt == expected
 
 
 def test_focus_is_appended_to_prompt():
