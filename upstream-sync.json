@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/NousResearch/hermes-agent",
-  "zeus_base": "559a6d3f48d7d77cf64b2719f7fa7ff659a829d8",
+  "zeus_base": "7ed5a70a47217e0d89f6d77696877ca00e066b94",
   "upstream_base": "53c57871d67ee7d2202861aacc4ea0ef6ef93112",
   "upstream_target": "d595e636c83aa0b9606d4e914e1140ae9c796897",
   "commits_reviewed": 181,
@@ -30,5 +30,45 @@
       "bc3df8a4d58e180ab46cf27b947e13e75a07ba51"
     ],
     "scope": "Selected stale-write, paginated-read baseline, off-loop checkpoint maintenance, Telegram skill resolution, and NT-namespace access fixes. Zeus adds pre-rename transport length and SHA-256 verification. Other upstream changes are not claimed as integrated."
+  },
+  "previous_integration_test_base": "559a6d3f48d7d77cf64b2719f7fa7ff659a829d8",
+  "reliability_updates": {
+    "date": "2026-09-23",
+    "reviewed_snapshot": "9fe737aef2dd18a351dff3c4de608d63879a6524",
+    "commits": [
+      "c2bc93588f10f18c5611f8b68f0754d2d9c7a9fa",
+      "2069de86bb80d9c220ea81dd0f23e7ae6c5a557b",
+      "b905042d37e4f6ea20ff64d4f3b3b6ca373ab00a",
+      "f2f70bed7afa8315f9492256628f32f76ab0786d",
+      "36b6efc29750b2a741eb29e9ca2e8ddbbaa23770",
+      "23d3edac4e52d9df76dcb9cf8cb6c587f7d9c0c1",
+      "73c4dc151dd733f381582740a74e92c4b5779332",
+      "137cbb78190ee459443a18b82cd44ab8d37579fe",
+      "75d92e3d7bea0f137411f9b514f344e88ff1533b",
+      "b8b519c398874ab42550acad7aa6512105c057a4",
+      "d1267d8045bb3608e669718716f74c960c2af3f5",
+      "28bd8cc08c7e6134b46e86904f5648bdf256610a",
+      "af0305c95af448c40a15927ea41f4dbb9467dbb1",
+      "e1ea7e74f08e61c69b6c3dba7b2fce301f5e8cbf",
+      "83a1a9a2bb9105e7e176bf47c6da69369407fa97",
+      "7216a8607925085141f0710b0b3accfe09285f19",
+      "fb2f3e213a55b4085bd39a84c83ae64c3fa90835",
+      "a57a5f90d2bb645062aad6d075b452b0db148c33",
+      "e794bb31cb75d2dc8937f928e736fb73155e674c"
+    ],
+    "scope": "Selected compatible memory, provider identity, context-limit, browser recovery, checkpoint cleanup, Telegram pacing and blocking-command fixes. The plugin-command change ports executor dispatch only. The full newer upstream tree and its gateway architecture migration are not integrated.",
+    "zeus_extensions": [
+      "Concurrent Telegram sends recheck the shared pacing slot.",
+      "Guarded persisted multimodal context backfill after in-place compaction.",
+      "Checkpoint write-ledger routing honors explicit scratch workspace roots across restarts.",
+      "Read-only Git object cleanup works on Windows."
+    ],
+    "preserved": [
+      "Zeus profiles and visual identity",
+      "Automatic evidence-based learning",
+      "Autonomy, unlimited goal and loop controls",
+      "Telegram custom providers",
+      "Private runtime configuration"
+    ]
   }
 }
