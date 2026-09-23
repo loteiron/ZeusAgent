@@ -583,6 +583,21 @@ class SessionMessagesMixin:
             ") AND content IS ?",
             (_scrub_surrogates(api_content), session_id, self._encode_content(content)))
 
+    def set_latest_user_multimodal_content(self, session_id: str, content: list,
+                                           updated_content: list) -> int:
+        """Backfill current-turn context after compaction, preserving a racing rewrite.
+
+        Only the newest active user row can change, and only if it still has the
+        exact original image/text content. Earlier cached turns remain untouched.
+        """
+        if not isinstance(content, list) or not isinstance(updated_content, list):
+            raise TypeError("Multimodal backfill requires content lists")
+        return self._write_rowcount(
+            "UPDATE messages SET content = ? WHERE id = (SELECT id FROM messages "
+            "WHERE session_id = ? AND role = 'user' AND active = 1 ORDER BY id DESC LIMIT 1"
+            ") AND content IS ?",
+            (self._encode_content(updated_content), session_id, self._encode_content(content)))
+
     def _dedupe_display_generations(self, rows):
         """Collapse compaction generations so each logical message appears once (the protected tail is copied
         into each generation: same role/content/timestamp, different ``active``/id); prefer the live row, then
