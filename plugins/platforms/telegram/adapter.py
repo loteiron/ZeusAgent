@@ -159,6 +159,7 @@ _TELEGRAM_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 # machinery (delivery ledger, streaming fallback) owns the wait instead of the coroutine pinning its worker
 # — a 97-minute penalty on the boot path froze inbound on every platform (#91969).
 _FLOOD_INLINE_WAIT_CAP_SECS = 5.0
+_TELEGRAM_CHAT_OUTBOUND_BUDGET_SECS = 1.0
 
 
 def _flood_cap_result(wait: float) -> "SendResult":
@@ -3343,6 +3344,10 @@ class TelegramAdapter(BasePlatformAdapter):
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():
             return SendResult(success=True, message_id=None)
+        while (remaining := self._chat_outbound_slot_remaining(chat_id)) > 0:
+            # Other sends and final edits can claim the slot while we sleep.
+            await asyncio.sleep(remaining)
+        self._hold_chat_outbound_slot(chat_id)
         error_types = self._telegram_error_types()
         try:
             # Bot API 10.1 rich fast-path; falls through to legacy MarkdownV2 on permanent/capability
@@ -3446,6 +3451,10 @@ class TelegramAdapter(BasePlatformAdapter):
         continuations, and return the final chunk's id as the next edit target."""
         if not self._bot:
             return SendResult(success=False, error="Not connected")
+        if (not finalize and utf16_len(content) <= self.MAX_MESSAGE_LENGTH
+                and self._chat_outbound_slot_remaining(chat_id) > 0):
+            return SendResult(success=True, message_id=message_id, raw_response={"skipped": True})
+        self._hold_chat_outbound_slot(chat_id)
         # Rich finalize (Bot API 10.1): edit the preview IN PLACE via rich_message — no fresh send + delete.
         # Before the 4,096 pre-flight because the rich cap is 32,768; falls back to legacy on rejection.
         # Rich finalize (Bot API 10.1): when the completed content has constructs the legacy MarkdownV2 edit
@@ -4869,6 +4878,26 @@ class TelegramAdapter(BasePlatformAdapter):
             return True
         self._telegram_typing_cooldown_until.pop(str(chat_id), None)
         return False
+
+    def _chat_outbound_slot_remaining(self, chat_id: Any) -> float:
+        """Seconds until this chat's shared send+edit slot is open again (0 = may fire now)."""
+        slot_until: Dict[str, float] = self.__dict__.setdefault("_telegram_chat_outbound_slot_until", {})
+        key = str(normalize_telegram_chat_id(chat_id))
+        deadline = slot_until.get(key)
+        if deadline is None:
+            return 0.0
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            slot_until.pop(key, None)  # expired — bounded dict, like the send locks
+            return 0.0
+        return remaining
+
+    def _hold_chat_outbound_slot(self, chat_id: Any) -> None:
+        """Arm/re-arm this chat's slot after an actual send/edit API call fires."""
+        slot_until: Dict[str, float] = self.__dict__.setdefault("_telegram_chat_outbound_slot_until", {})
+        budget = getattr(self, "_telegram_chat_outbound_slot_secs", _TELEGRAM_CHAT_OUTBOUND_BUDGET_SECS)
+        slot_until[str(normalize_telegram_chat_id(chat_id))] = (
+            asyncio.get_running_loop().time() + max(0.0, budget))
 
     async def send_typing(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Send typing indicator."""
