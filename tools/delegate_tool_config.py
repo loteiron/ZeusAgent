@@ -498,6 +498,10 @@ def _resolve_child_runtime(
         # Forced ACP transport requires provider copilot-acp for run_agent to init the client.
         effective_provider, effective_api_mode = "copilot-acp", "chat_completions"
 
+    effective_requested_provider = effective_provider
+    if not override_provider and not override_base_url and not override_acp_command:
+        effective_requested_provider = getattr(parent_agent, "requested_provider", None) or effective_provider
+
     # Reasoning: delegation.reasoning_effort > parent. Keep the raw value — a
     # YAML ``false`` must disable thinking, not coerce to "" and inherit.
     child_reasoning = getattr(parent_agent, "reasoning_config", None)
@@ -515,7 +519,7 @@ def _resolve_child_runtime(
 
     kwargs: Dict[str, Any] = {
         "base_url": effective_base_url, "api_key": override_api_key or parent_api_key, "model": effective_model,
-        "provider": effective_provider,
+        "provider": effective_provider, "requested_provider": effective_requested_provider,
         "capabilities": _inherit_parent_capabilities(parent_agent, override_provider, override_base_url),
         "api_mode": effective_api_mode, "acp_command": effective_acp_command, "acp_args": effective_acp_args,
         "reasoning_config": child_reasoning,
