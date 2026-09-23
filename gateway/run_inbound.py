@@ -1018,9 +1018,15 @@ class GatewayInboundMixin:
                 from zeus_cli.plugins import get_plugin_command_handler
                 plugin_handler = get_plugin_command_handler(command.replace("_", "-"))
                 if plugin_handler:
-                    result = plugin_handler(event.get_command_args().strip())
-                    if asyncio.iscoroutine(result):
-                        result = await result
+                    user_args = event.get_command_args().strip()
+                    if asyncio.iscoroutinefunction(plugin_handler):
+                        result = await plugin_handler(user_args)
+                    else:
+                        # Blocking plugin I/O must not stall Telegram, other chats,
+                        # or the gateway watchdog. Carry the current contextvars.
+                        result = await self._run_in_executor_with_context(plugin_handler, user_args)
+                        if asyncio.iscoroutine(result):
+                            result = await result
                     return True, str(result) if result else None, command
             except Exception as e:
                 logger.warning("Plugin command dispatch failed: %s", e)
