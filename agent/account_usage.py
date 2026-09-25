@@ -11,6 +11,7 @@ import httpx
 from agent.anthropic_credentials import _is_oauth_token, resolve_anthropic_token
 from zeus_cli.auth import AuthError, _read_codex_tokens, resolve_codex_runtime_credentials
 from zeus_cli.runtime_provider import resolve_runtime_provider
+from zeus_time import safe_strftime
 
 if TYPE_CHECKING:
     from typing import TypeGuard
@@ -75,7 +76,7 @@ def _parse_dt(value: Any) -> Optional[datetime]:
 def _format_reset(dt: Optional[datetime]) -> str:
     if not dt:
         return "unknown"
-    stamp = dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    stamp = safe_strftime(dt.astimezone(), "%Y-%m-%d %H:%M %Z")
     total_seconds = int((dt - _utc_now()).total_seconds())
     if total_seconds <= 0:
         return f"now ({stamp})"

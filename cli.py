@@ -7,6 +7,12 @@ try:
 except ModuleNotFoundError:
     pass
 
+# Repair interrupted source updates before loading the rest of the checkout.
+from zeus_cli import _early_recovery
+
+if _early_recovery.restore_interrupted_pull():
+    _early_recovery.relaunch_after_restore()
+
 import logging
 import os
 import functools

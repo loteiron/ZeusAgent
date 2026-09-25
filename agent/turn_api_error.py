@@ -15,6 +15,7 @@ import ssl
 import time
 from typing import Any, Dict, Optional
 
+from agent.api_error_summary import is_provider_stream_parse_error
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.turn_overflow import recover_from_overflow
 from agent.turn_recovery import (
@@ -223,6 +224,8 @@ def _is_local_validation_error(api_error: Any) -> bool:
         return False
     if isinstance(api_error, (UnicodeEncodeError, json.JSONDecodeError, ssl.SSLError)):
         return False
+    if is_provider_stream_parse_error(api_error):
+        return False  # A corrupted SSE frame is a transient provider failure.
     _text = str(api_error).lower()
     return not (isinstance(api_error, TypeError) and "nonetype" in _text and "not iterable" in _text)
 

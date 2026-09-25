@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zeus_cli._subprocess_compat import IS_WINDOWS, kill_process_tree, windows_hide_flags
 from zeus_cli.goal_evidence import gate_freshness, normalized_workspace
 from zeus_cli.goal_concurrency import GoalStateChanged, save_if_unchanged, stored_snapshot
+from zeus_time import safe_strftime
 
 logger = logging.getLogger(__name__)
 
@@ -944,7 +945,7 @@ def judge_goal(
         response=_truncate(last_response, _JUDGE_RESPONSE_SNIPPET_CHARS),
         background_block=_render_background_block(background_processes)
         + (JUDGE_DELEGATIONS_BLOCK_TEMPLATE.format(count=active_delegations) if active_delegations > 0 else ""),
-        current_time=datetime.now(tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+        current_time=safe_strftime(datetime.now(tz=timezone.utc).astimezone(), "%Y-%m-%d %H:%M:%S %Z"),
     )
     if contract is not None and not contract.is_empty():
         contract_block = contract.render_block()

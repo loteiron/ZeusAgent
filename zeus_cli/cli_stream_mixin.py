@@ -251,7 +251,7 @@ class CLIStreamMixin:
             self._reasoning_buf = ""
 
     def _close_reasoning_box(self) -> None:
-        """Close the live reasoning box if it's open, then flush deferred content."""
+        """Close the live reasoning box if it's open (renders the buffered reasoning tail)."""
         from cli import _DIM, _RST, _cprint
         if not getattr(self, "_reasoning_box_opened", False):
             return
@@ -262,10 +262,6 @@ class CLIStreamMixin:
         w = self._scrollback_box_width()
         _cprint(f"{_DIM}└{'─' * (w - 2)}┘{_RST}")
         self._reasoning_box_opened = False
-        deferred = getattr(self, "_deferred_content", "")
-        if deferred:
-            self._deferred_content = ""
-            self._emit_stream_text(deferred)
 
     def _stream_delta(self, text) -> None:
         """Line-buffered streaming callback for real-time token rendering.
@@ -386,10 +382,8 @@ class CLIStreamMixin:
             ZeusAgentCLI, _ACCENT, _RST, _STREAM_PARTIAL_PREVIEW_LEN, _cprint, _strip_markdown_syntax, datetime)
         if not text:
             return
-        # Defer content while the reasoning box renders so reasoning always lands BEFORE it.
-        if self.show_reasoning and getattr(self, "_reasoning_box_opened", False):
-            self._deferred_content = getattr(self, "_deferred_content", "") + text
-            return
+        # Close a still-open reasoning box on the first content token so the answer streams
+        # token-by-token; _close_reasoning_box renders the reasoning tail first, so ordering holds.
         self._close_reasoning_box()
 
         # Open the response box header on the very first visible text
@@ -494,7 +488,6 @@ class CLIStreamMixin:
         self._reasoning_box_opened = False
         self._reasoning_buf = ""
         self._reasoning_preview_buf = ""
-        self._deferred_content = ""
         # A batch cancelled/errored before any tool.started would otherwise mute the next turn's line.
         self.__dict__.pop("_tool_gen_announced", None)
         self._stream_table_buf = []

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from zeus_cli.config import get_zeus_home  # noqa: F401  (re-exported; patched via update_cmd)
 from zeus_cli.update_cmd_common import _best_effort
+from zeus_cli._early_recovery import interrupted_pull_marker
 from zeus_constants import get_default_zeus_root, venv_python_path
 
 # Re-exports: every split-module name stays reachable (and monkeypatchable) as update_cmd.<name>.
@@ -772,11 +773,23 @@ def _pull_updates(
     # critical-path file (PR #28452 incident: orphan merge-conflict markers in zeus_cli/config.py bricked
     # every user who ran ``zeus update`` for the 7 minutes between the bad commit and the fix landing).
     pre_pull_sha = _capture_head_sha(git_cmd, _m().PROJECT_ROOT)
+    # Pin the target commit: later fetches cannot widen recovery's scope.
+    pull_marker = interrupted_pull_marker(_m().PROJECT_ROOT)
+    target_sha = (_git_run(git_cmd, ["rev-parse", f"origin/{branch}^{{commit}}"]).stdout or "").strip()
+    with _best_effort('Could not write the interrupted-pull marker: %s'):
+        pull_marker.write_text(
+            f"pid={os.getpid()}\npre={pre_pull_sha}\ntarget={target_sha}\nstash={auto_stash_ref or ''}\n",
+            encoding="utf-8")
     try:
-        # merge --ff-only the already-fetched ref instead of `git pull`, which would do a
-        # SECOND network fetch; identical in effect given the fresh tracking ref.
-        if _git_run(git_cmd, ["merge", "--ff-only", f"origin/{branch}"]).returncode != 0:
-            _reconcile_diverged_checkout(git_cmd, branch, pre_pull_sha)
+        try:
+            if _git_run(git_cmd, ["merge", "--ff-only", f"origin/{branch}"]).returncode != 0:
+                _reconcile_diverged_checkout(git_cmd, branch, pre_pull_sha)
+        except KeyboardInterrupt:
+            raise  # Git may have been interrupted halfway through the checkout.
+        except BaseException:
+            pull_marker.unlink(missing_ok=True)
+            raise
+        pull_marker.unlink(missing_ok=True)
         _rollback_if_pulled_syntax_error(git_cmd, pre_pull_sha)
         update_succeeded = True
     finally:

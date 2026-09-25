@@ -303,6 +303,33 @@ def _continue_text(st: _Trunc, _retry: TurnRetryState, assistant_message: Any) -
     )
 
 
+def _model_output_limit(agent: Any) -> Optional[int]:
+    """The model's real max output tokens when ZeusAgent knows it, else None."""
+    if getattr(agent, "api_mode", None) != "anthropic_messages":
+        return None
+    # Local: only Anthropic-Messages turns need the adapter module.
+    from agent.anthropic_adapter import _get_anthropic_max_output
+    return _get_anthropic_max_output(getattr(agent, "model", None) or "")
+
+
+def boosted_output_cap(agent: Any, requested_cap: Optional[int], n: int, base: Optional[int] = None) -> int:
+    """Output budget for truncation retry ``n`` (1-based): ``base·2ⁿ``, never below the
+    failed request's cap, at most ``max(32768, 2×cap)``, and never above the model's
+    known output limit. ``base`` defaults to max_tokens, else the cap actually sent.
+
+    A ceiling equal to the requested cap would re-send the same budget (#72770); a
+    ceiling past the model limit only buys a provider 400 (#79715).
+    """
+    if base is None:
+        base = agent.max_tokens or requested_cap or 4096
+    anchor = requested_cap or base
+    limit = _model_output_limit(agent)
+    if limit and anchor >= limit:
+        return anchor  # already at the model ceiling: doubling cannot help
+    boost = min(max(base * (2 ** n), requested_cap or 0), max(32768, anchor * 2))
+    return min(boost, limit) if limit else boost
+
+
 def _retry_truncated_tool_call(st: _Trunc, api_kwargs: Any) -> TruncationVerdict:
     """Truncated tool call: re-run the same call (up to 4×) with a boosted max_tokens —
     a real output-cap truncation needs it, harmless for a network stall — else refuse to
@@ -315,11 +342,9 @@ def _retry_truncated_tool_call(st: _Trunc, api_kwargs: Any) -> TruncationVerdict
             agent._buffer_vprint(f"⚠️  Stream interrupted mid tool-call — retrying ({n}/4)...")
         else:
             agent._buffer_vprint(f"⚠️  Truncated tool call detected — retrying API call ({n}/4)...")
-        _tc_boost = (agent.max_tokens if agent.max_tokens else 4096) * (2 ** n)
-        _tc_requested_cap = agent._requested_output_cap_from_api_kwargs(api_kwargs)
-        if _tc_requested_cap is not None:
-            _tc_boost = max(_tc_boost, _tc_requested_cap)
-        agent._ephemeral_max_output_tokens = min(_tc_boost, max(32768, _tc_requested_cap or 0))
+        agent._ephemeral_max_output_tokens = boosted_output_cap(
+            agent, agent._requested_output_cap_from_api_kwargs(api_kwargs), n
+        )
         return st.done("continue")  # don't append the broken response
     agent._flush_status_buffer()
     if st.is_stub:

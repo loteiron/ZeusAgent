@@ -368,6 +368,9 @@ class _PollingLifecycleAbort(RuntimeError):
     """Internal control flow for polling startup fenced by teardown."""
 
 
+_INGRESS_DISPATCH_STALL_HEARTBEATS = 2
+
+
 class TelegramAdapter(BasePlatformAdapter):
     """Telegram bot adapter: users/groups, MarkdownV2 replies, forum topics, media."""
 
@@ -429,6 +432,17 @@ class TelegramAdapter(BasePlatformAdapter):
         super().__init__(config, Platform.TELEGRAM)
         extra = self.config.extra
         self._app: Optional[Application] = None
+        self._seen_update_ids: dict = {}
+        self._inflight_update_ids: dict = {}
+        self._update_admission = None
+        self._updates_dispatched_total = 0
+        self._updates_received_total = 0
+        self._ingress_dispatched_seen = self._ingress_stalled_heartbeats = 0
+        from zeus_constants import get_zeus_home
+        self._update_receipt_dir = get_zeus_home()
+        self._update_receipts_loaded: set = set()
+        self._update_receipts_dirty: set = set()
+        self._update_receipt_flush: Optional[asyncio.Task] = None
         self._bot: Optional[Bot] = None
         self._webhook_mode: bool = False
         self._mention_patterns = self._compile_mention_patterns()
@@ -645,6 +659,7 @@ class TelegramAdapter(BasePlatformAdapter):
             logger.warning(
                 "[Telegram] Held-inbound queue full (%d); dropping oldest (%d chars)", max_n, len(getattr(dropped, "text", None) or ""))
         held.append(event)
+        self._accept_update()
         logger.warning(
             "[Telegram] Holding inbound (%s, %d chars, queue=%d)%s", where, len(getattr(event, "text", None) or ""), len(held),
             " - will redispatch on reconnect" if self._should_drop_delayed_delivery() else (" - scheduling redispatch" if schedule else ""))
@@ -1599,6 +1614,8 @@ class TelegramAdapter(BasePlatformAdapter):
         # See #92991.
         self._polling_generation_started_monotonic = time.monotonic()
         self._polling_last_progress_monotonic = None
+        self._updates_received_total = self._updates_dispatched_total = 0
+        self._ingress_dispatched_seen = self._ingress_stalled_heartbeats = 0
         return self._polling_generation, self._polling_progress_event
 
     def _record_polling_progress(self, generation: int) -> None:
@@ -1636,7 +1653,15 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception:
             return
         if isinstance(envelope, dict) and envelope.get("ok") is True and "result" in envelope:
-            self._record_polling_progress(generation)
+            if self._record_polling_progress(generation):
+                self._record_updates_received(envelope.get("result"))
+
+    def _record_updates_received(self, result) -> None:
+        """Count updates Telegram handed us on the getUpdates wire (#102260). Only reached for the
+        accepted generation, so a late response from a fenced poll cannot inflate the backlog."""
+        if isinstance(result, list) and result:
+            self._updates_received_total += len(result)
+
 
     def _instrument_polling_request(self, request):
         """Instrument one dedicated PTB getUpdates request with progress tracking.
@@ -2050,6 +2075,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 # so a consumer with no successful round-trip past the stall threshold is dead (#92991).
                 # Pure local-state check — no Bot API call needed.
                 await self._check_polling_stall()
+                self._check_ingress_dispatch_stall()
             except asyncio.CancelledError:
                 return
             except (asyncio.TimeoutError, OSError) as probe_err:
@@ -2131,6 +2157,36 @@ class TelegramAdapter(BasePlatformAdapter):
             return
         logger.warning(log_message, self.name)
         self._polling_error_task = asyncio.get_running_loop().create_task(self._handle_polling_network_error(RuntimeError(reason)))
+
+    def _check_ingress_dispatch_stall(self) -> None:
+        """Report fetched updates PTB's dispatcher is not handing to handlers (#102260).
+
+        ``received`` and ``dispatched`` count the same population (every fetched update reaches the
+        group-99 catch-all: no handler raises ApplicationHandlerStop, no error handler is registered),
+        so a backlog with no dispatch progress across ``_INGRESS_DISPATCH_STALL_HEARTBEATS`` heartbeats
+        is a wedged dispatcher at any traffic rate. Reports once per stall, re-arms on progress.
+        """
+        if self._webhook_mode or self._teardown_started or self.has_fatal_error:
+            return
+        received = getattr(self, "_updates_received_total", 0)
+        dispatched = getattr(self, "_updates_dispatched_total", 0)
+        if received <= dispatched or dispatched != getattr(self, "_ingress_dispatched_seen", 0):
+            self._ingress_dispatched_seen = dispatched
+            self._ingress_stalled_heartbeats = 0
+            return
+        stalled = getattr(self, "_ingress_stalled_heartbeats", 0)
+        if stalled >= _INGRESS_DISPATCH_STALL_HEARTBEATS:
+            return  # already reported this stall
+        self._ingress_stalled_heartbeats = stalled + 1
+        if stalled + 1 < _INGRESS_DISPATCH_STALL_HEARTBEATS:
+            return
+        logger.warning(
+            "[%s] Telegram ingress is healthy but deaf: %d update(s) fetched by getUpdates have not been "
+            "dispatched to any handler across %d heartbeats (%d received, %d dispatched, generation %d). "
+            "Polling is fine; PTB's dispatcher is not draining its queue.",
+            self.name, received - dispatched, _INGRESS_DISPATCH_STALL_HEARTBEATS, received, dispatched,
+            getattr(self, "_polling_generation", 0))
+
 
     async def _check_polling_stall(self) -> None:
         """Watchdog the last successful getUpdates round-trip: a long-poll can wedge without raising
@@ -2580,6 +2636,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 return
             event = self._normalize_platform_event(update)
         except Exception:
+            self._fail_update_preparation()
             logger.debug("[%s] gateway_platform_event normalize error", self.name, exc_info=True)
             return
         if event is None:
@@ -2587,8 +2644,10 @@ class TelegramAdapter(BasePlatformAdapter):
         # The gateway-owned boundary runs the full profile-scoped auth chain before plugin dispatch.
         try:
             source = self._source_for_platform_event_auth(update)
+            self._accept_update()
             await handler(event, source)
         except Exception:
+            self._fail_update_preparation()
             logger.debug("[%s] gateway_platform_event dispatch error", self.name, exc_info=True)
 
     def _source_for_platform_event_auth(self, update):
@@ -2682,8 +2741,31 @@ class TelegramAdapter(BasePlatformAdapter):
                 "text": text[:8192] if text is not None else None, "edited_at": edited_at},
         }
 
+    def _accept_update(self) -> None:
+        """Handoff is irreversible for replay purposes, even if later work raises/cancels."""
+        admission = getattr(self, "_update_admission", None)
+        claim = admission.get() if admission is not None else None
+        if claim is not None:
+            claim.accepted = True
+
+
+    def _fail_update_preparation(self) -> None:
+        """A caught preparation error is not a successful no-op or an auth refusal."""
+        admission = getattr(self, "_update_admission", None)
+        claim = admission.get() if admission is not None else None
+        if claim is not None:
+            claim.failed = True
+
+
+    async def handle_message(self, event: MessageEvent) -> None:
+        self._accept_update()
+        await super().handle_message(event)
+
+
     def _register_handlers(self, app) -> None:
         """Register every PTB handler on ``app`` (initial connect and the transient-init rebuild)."""
+        table = getattr(app, "handlers", None)
+        core_before = {g: len(hs) for g, hs in table.items()} if isinstance(table, dict) else {}
         app.add_handler(TelegramMessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text_message))
         app.add_handler(TelegramMessageHandler(filters.COMMAND, self._handle_command))
         app.add_handler(TelegramMessageHandler(
@@ -2696,6 +2778,31 @@ class TelegramAdapter(BasePlatformAdapter):
         app.add_handler(InlineQueryHandler(self._handle_inline_query))
         # gateway_platform_event observer: group 99 observes alongside, never displaces, core handlers.
         app.add_handler(TypeHandler(Update, self._on_platform_update), group=99)
+        # Everything appended above is core; a late plugin re-wire must land BEFORE these (#87770).
+        if isinstance(table, dict):
+            self._core_handler_ids = {id(h) for g, hs in table.items() for h in hs[core_before.get(g, 0):]}
+
+
+    def _wire_plugin_handlers(self, native: Any = None) -> None:
+        """PTB dispatches the FIRST matching handler per group and core registers catch-alls
+        (``filters.COMMAND``, ``CallbackQueryHandler``), so a plugin handler appended after connect
+        would never fire. Move whatever a late factory added ahead of the first core handler of its
+        group, keeping the plugin handlers' own relative order."""
+        handlers = getattr(native, "handlers", None)
+        core_ids = getattr(self, "_core_handler_ids", None)
+        if not isinstance(handlers, dict) or not core_ids:
+            super()._wire_plugin_handlers(native)  # first wire runs before core registers: nothing to hoist
+            return
+        before = {g: list(hs) for g, hs in handlers.items()}
+        super()._wire_plugin_handlers(native)
+        for group, current in handlers.items():
+            prior = before.get(group, [])
+            prior_ids = {id(h) for h in prior}
+            added = [h for h in current if id(h) not in prior_ids]
+            first_core = next((i for i, h in enumerate(prior) if id(h) in core_ids), None)
+            if not added or first_core is None:
+                continue
+            current[:] = prior[:first_core] + added + prior[first_core:]
 
     async def _build_ptb_requests(self) -> tuple:
         """Build the (general, getUpdates) HTTPXRequest pair: fallback-IP transport, explicit proxy, or
@@ -2930,7 +3037,9 @@ class TelegramAdapter(BasePlatformAdapter):
         try:
             if not self._acquire_platform_lock('telegram-bot-token', self.config.token, 'Telegram bot token'):
                 return False
+            from plugins.platforms.telegram.update_admission import TelegramApplication
             builder = Application.builder().token(self.config.token)
+            builder.application_class(TelegramApplication, {"adapter": self})
             custom_base_url = self.config.extra.get("base_url")
             if custom_base_url:
                 builder = builder.base_url(custom_base_url)
@@ -3171,6 +3280,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 logger.warning("[%s] Error during Telegram disconnect: %s", self.name, _redact_telegram_error_text(e))
         self._app = None
         self._bot = None
+        flush = getattr(self, "_update_receipt_flush", None)
+        if flush is not None and not flush.done():
+            await self._await_disconnect_step(asyncio.shield(flush), _DISCONNECT_STEP_TIMEOUT, "update-receipt flush")
         logger.info("[%s] Disconnected from Telegram", self.name)
 
     def _should_thread_reply(self, reply_to: Optional[str], chunk_index: int) -> bool:
@@ -4215,8 +4327,10 @@ class TelegramAdapter(BasePlatformAdapter):
         if not authorized:
             try:
                 from plugins.platforms.telegram.inline_picker import CACHE_TIME_SECONDS as _deny_cache
+                self._accept_update()
                 await inline_query.answer([], cache_time=_deny_cache, is_personal=True)
             except Exception:
+                self._fail_update_preparation()
                 logger.debug("[%s] inline picker empty answer failed", self.name, exc_info=True)
             return
         try:
@@ -4233,8 +4347,10 @@ class TelegramAdapter(BasePlatformAdapter):
                 for r in results
            ]
             # is_personal: catalogs differ per user (auth, disabled skills) — never share cached pages.
+            self._accept_update()
             await inline_query.answer(articles, cache_time=_CACHE, is_personal=True, next_offset=next_offset)
         except Exception:
+            self._fail_update_preparation()
             logger.debug("[%s] inline picker answer failed", self.name, exc_info=True)
 
     @staticmethod
@@ -4261,6 +4377,7 @@ class TelegramAdapter(BasePlatformAdapter):
         query = update.callback_query
         if not query or not query.data:
             return
+        self._accept_update()
         data = query.data
         cb = self._callback_ctx(query)
         # Model picker / generic choice picker (/reasoning, /fast) need a chat id.
@@ -5600,6 +5717,7 @@ class TelegramAdapter(BasePlatformAdapter):
         """
         named = f" ({display_name})" if display_name else ""
         try:
+            self._accept_update()
             await msg.reply_text(
                 f"\u26a0\ufe0f Couldn't download your {kind}{named} ({exc.__class__.__name__}). Please try sending it again.")
         except Exception as reply_err:
@@ -5624,11 +5742,13 @@ class TelegramAdapter(BasePlatformAdapter):
                 "timestamp": datetime.now(tz=timezone.utc).isoformat(), "observed": True}
             if event.message_id:
                 entry["message_id"] = str(event.message_id)
+            self._accept_update()
             store.append_to_transcript(session_entry.session_id, entry)
             logger.info(
                 "[%s] Telegram group message observed (no bot trigger): chat=%s from=%s", adapter_name,
                 getattr(getattr(message, "chat", None), "id", "unknown"), event.source.user_id or "unknown")
         except Exception as exc:
+            self._fail_update_preparation()
             logger.warning("[%s] Failed to observe Telegram group message: %s", adapter_name, exc)
 
     def _is_own_message(self, message: Message) -> bool:
@@ -5820,6 +5940,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._hold_inbound_event(event, where="text-enqueue")
             return
         super()._enqueue_text_event(event)
+        self._accept_update()
 
     async def _flush_buffered(self, pending: dict, tasks: dict, key: str, delay: float, where: str, log_fn=None) -> None:
         """Shared delayed-flush body: sleep, pop, hold if teardown started, else dispatch. A cancel after
@@ -5901,6 +6022,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._hold_inbound_event(event, where="photo-enqueue")
             return
         self._merge_into_pending(self._pending_photo_batches, batch_key, event)
+        self._accept_update()
         prior_task = self._pending_photo_batch_tasks.get(batch_key)
         if prior_task and not prior_task.done():
             prior_task.cancel()
@@ -6109,6 +6231,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._hold_inbound_event(event, where="media-group-enqueue")
             return
         self._merge_into_pending(self._media_group_events, media_group_id, event)
+        self._accept_update()
         prior_task = self._media_group_tasks.get(media_group_id)
         if prior_task:
             prior_task.cancel()
@@ -6141,6 +6264,7 @@ class TelegramAdapter(BasePlatformAdapter):
             cached_path = await cache_image_from_bytes_async(bytes(image_bytes), ext=".webp")
             logger.info("[Telegram] Analyzing sticker at %s", cached_path)
             from tools.vision_tools import vision_analyze_tool
+            self._accept_update()  # Cancellation cannot undo an already submitted auxiliary LLM request.
             result = json.loads(await vision_analyze_tool(image_url=cached_path, user_prompt=STICKER_VISION_PROMPT))
             if result.get("success"):
                 description = result.get("analysis", "a sticker")

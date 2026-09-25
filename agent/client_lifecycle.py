@@ -856,6 +856,15 @@ class ClientLifecycleMixin:
             or base_url_host_matches(getattr(self, "_anthropic_base_url", "") or "", "azure.com")
         ):
             return False
+        # A custom Anthropic-compatible endpoint must never acquire the native
+        # account's credential through refresh. Explicit native-token proxies keep
+        # rotation, since that endpoint already holds the native credential.
+        endpoint = getattr(self, "_anthropic_base_url", "") or ""
+        official_host = not endpoint or any(
+            base_url_host_matches(endpoint, host) for host in ("anthropic.com", "claude.com"))
+        current_key = str(self._anthropic_api_key or "")
+        if not official_host and not (current_key.startswith("sk-ant-") or getattr(self, "_is_anthropic_oauth", False)):
+            return False
         try:
             from agent.anthropic_credentials import resolve_anthropic_token
             new_token = resolve_anthropic_token()

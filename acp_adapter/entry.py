@@ -20,6 +20,12 @@ else:
     # Stop a ``utils/``/``proxy/``/``ui/`` package in the launch cwd from shadowing ZeusAgent modules.
     zeus_bootstrap.harden_import_path()
 
+# Repair interrupted source updates before loading the rest of the checkout.
+from zeus_cli import _early_recovery
+
+if _early_recovery.restore_interrupted_pull():
+    _early_recovery.relaunch_after_restore()
+
 import argparse
 import asyncio
 import logging

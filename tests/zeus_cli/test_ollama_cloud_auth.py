@@ -379,7 +379,7 @@ class TestSwitchModelDirectAliasOverride:
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
 
         monkeypatch.setattr(ms, "resolve_alias",
-            lambda raw, prov: ("custom", "qwen3.5:397b", "qwen"))
+            lambda raw, prov, *_: ("custom", "qwen3.5:397b", "qwen"))
 
         monkeypatch.setattr(
             "zeus_cli.runtime_provider.resolve_runtime_provider",
@@ -406,7 +406,7 @@ class TestSwitchModelDirectAliasOverride:
         }
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
         monkeypatch.setattr(ms, "resolve_alias",
-            lambda raw, prov: ("custom", "local-model", "local"))
+            lambda raw, prov, *_: ("custom", "local-model", "local"))
         monkeypatch.setattr(
             "zeus_cli.runtime_provider.resolve_runtime_provider",
             lambda **kwargs: {"api_key": "", "base_url": "", "api_mode": "openai_compat", "provider": "custom"},

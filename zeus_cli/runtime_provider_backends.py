@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, Optional
 
 from zeus_constants import OPENROUTER_BASE_URL
-from utils import base_url_host_matches
+from utils import base_url_host_matches, base_url_hostname
 
 
 def _rp():
@@ -152,7 +152,12 @@ def _resolve_openrouter_runtime(
         )
     )
     if is_openrouter_context:
-        candidates = [explicit_api_key, rp._getenv("OPENROUTER_API_KEY"), rp._getenv("OPENAI_API_KEY")]
+        # A legacy OPENAI_API_KEY fallback belongs to OPENAI_BASE_URL when set.
+        # Endpoint selection still follows config; only credential ownership uses it.
+        openai_host = base_url_hostname(rp._getenv("OPENAI_BASE_URL", "").strip())
+        openai_key_ok = not openai_host or openai_host == base_url_hostname(base_url)
+        candidates = [explicit_api_key, rp._getenv("OPENROUTER_API_KEY"),
+                      rp._getenv("OPENAI_API_KEY") if openai_key_ok else ""]
     else:
         candidates = [explicit_api_key, (cfg_api_key if use_config_base_url else ""),
                       *rp._host_gated_env_key_candidates(base_url, ollama=True)]

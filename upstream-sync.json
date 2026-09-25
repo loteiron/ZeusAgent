@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/NousResearch/hermes-agent",
-  "zeus_base": "7ed5a70a47217e0d89f6d77696877ca00e066b94",
+  "zeus_base": "67865c0f1bef8389d49bb5cef0323fa324646870",
   "upstream_base": "53c57871d67ee7d2202861aacc4ea0ef6ef93112",
   "upstream_target": "d595e636c83aa0b9606d4e914e1140ae9c796897",
   "commits_reviewed": 181,
@@ -31,7 +31,7 @@
     ],
     "scope": "Selected stale-write, paginated-read baseline, off-loop checkpoint maintenance, Telegram skill resolution, and NT-namespace access fixes. Zeus adds pre-rename transport length and SHA-256 verification. Other upstream changes are not claimed as integrated."
   },
-  "previous_integration_test_base": "559a6d3f48d7d77cf64b2719f7fa7ff659a829d8",
+  "previous_integration_test_base": "7ed5a70a47217e0d89f6d77696877ca00e066b94",
   "reliability_updates": {
     "date": "2026-09-23",
     "reviewed_snapshot": "9fe737aef2dd18a351dff3c4de608d63879a6524",
@@ -69,6 +69,71 @@
       "Autonomy, unlimited goal and loop controls",
       "Telegram custom providers",
       "Private runtime configuration"
+    ]
+  },
+  "stream_and_update_reliability": {
+    "date": "2026-09-25",
+    "reviewed_snapshot": "ac4181fdfaa4fa3b0682ea7b592c7a3ee6465e62",
+    "latest_reviewed_release": "v0.21.5",
+    "commits": [
+      "a1838ea87a501aa28fa88381e11248a0265998ff",
+      "2f5f1a2c035ee8ee54393de6e9134e4afb5cceef",
+      "4f24811617591f8cc30c2b374b4181354791e8a5",
+      "80aec2223e167fc91253cce3a40cea71c10369ac",
+      "a09b36e82c26433f9e62f6bb87217d267f804fa4",
+      "6d150c7e7813e3bf0d0491fa9d0cb5a74ae2aba2",
+      "8aa1e450b88393f99baa0af45d4ecd06afa6aa90",
+      "da031c31c12b18494ea7c8cb0e433e7f9c604887",
+      "0a661b7c94437672ea7fca4e637cd6a987ec44fb",
+      "763646c30d17a0685ae8e5d7c47949a8d0e0f869",
+      "144e9711b8e3f28b81bc861dbf8012ba0bc7c0ff",
+      "5a7c26d5c1d09ea613c78105ca0b0687402f646d",
+      "e30f8c63442cee37c2df9af3cff7af113fd4ae11",
+      "f035bf872ec5e50cbab8bc5903a586106a6dc0d9",
+      "9f835060d525d0666e66cc1265c0106a3628c48a",
+      "7eda5a69cc83bae2b78eaac8e37057f9a3180f0f",
+      "c56c0a61c44529bf5e5d5f3058458b99d56f1c02",
+      "c9f14820b66ab3c8e1808faf2d3ca4750b2ecdff",
+      "8a9bc6e18e94517ed3dec2621ef4d2157df0b702",
+      "f477c13d533d7db76bfddd16f9883ec68c934ca0",
+      "8677f37481304f583266c1c9df79647534cb4763",
+      "93bfe69cac710bdd9606aac14b9ff341235d70d2",
+      "85cb540e6dfbcbbabc78a5b93ef7e57d206a5aba",
+      "c755d047c43a7585f90f28a68500d275b5d23b26",
+      "60f2bcf4abb8a1027d60637ec739240f9e23e579",
+      "1ee38c80901f7648f84f363c7a402fb77f15f654",
+      "79d012bd25945a65f51022f8a1a9ee04a294bd65",
+      "ffc44bbaf3a5be8fa72038320fa322a7fbe2400d"
+    ],
+    "scope": "Selected compatible changes from the September 24-25 upstream history, adapted to Zeus file locations and runtime contracts. This is not a wholesale upstream replacement.",
+    "features": [
+      "Telegram update admission across retries, native plugin handlers, reconnects and restarts; profile-scoped persisted receipts.",
+      "Lossless oversized stream spillover and failed-delivery recovery.",
+      "Provider SSE error status extraction, malformed-stream retry classification and third-party credential isolation.",
+      "Provider-owned model aliases, including legacy custom provider identities.",
+      "Adaptive truncation retry budgets bounded by known model limits.",
+      "Interrupted source-update recovery before entry-point imports; concurrent launch coordination and preservation of unrelated edits.",
+      "Immediate CLI answer streaming after reasoning; portable date formatting for Windows locales.",
+      "Desktop HTML preview/source toggle without duplicating tabs."
+    ],
+    "adaptations": [
+      "Retain Zeus profile-aware credential lookup, reconnect controls and native setup paths.",
+      "Add Telegram ingress accounting with explicit handoff markers in Zeus handlers.",
+      "Exercise real PTB dispatch offline; drain cancellation callbacks on Windows before checking ownership.",
+      "Isolate Qwen auth-failure test from external user credential pools."
+    ],
+    "not_integrated": [
+      "Upstream unified package manager and installer architecture replacement",
+      "BotScreen desktop control architecture",
+      "New upstream SDK and desktop/TUI goal-control protocol migration",
+      "Desktop custom-model catalog migration and unrelated connector changes"
+    ],
+    "preserved": [
+      "Automatic learning and memory",
+      "Autonomy and unlimited goals/loops",
+      "Telegram custom provider setup",
+      "Zeus storm-blue/copper design",
+      "Private runtime state"
     ]
   }
 }
