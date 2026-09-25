@@ -65,6 +65,11 @@ class _LifecycleBuilder:
     def token(self, _token):
         return self
 
+    def application_class(self, app_type, kwargs):
+        self.application_type = app_type
+        self.application_kwargs = kwargs
+        return self
+
     def request(self, _request):
         return self
 
@@ -411,6 +416,11 @@ async def test_general_request_success_cannot_record_polling_progress(monkeypatc
             self.polling_request = None
 
         def token(self, _token):
+            return self
+
+        def application_class(self, app_type, kwargs):
+            self.application_type = app_type
+            self.application_kwargs = kwargs
             return self
 
         def request(self, request):
